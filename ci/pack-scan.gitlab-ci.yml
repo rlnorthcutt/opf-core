@@ -1,0 +1,44 @@
+# pack-scan.gitlab-ci.yml
+#
+# GitLab CI include template for scanning an OPF pack.
+#
+# Usage: in your pack's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'your-group/opf-core'
+#       file: '/ci/pack-scan.gitlab-ci.yml'
+#
+# Or copy this file into your pack's .gitlab-ci.yml.
+
+stages:
+  - scan
+
+pack-scan:
+  stage: scan
+  image: alpine:latest
+  script:
+    - apk add --no-cache bash python3 py3-jsonschema >/dev/null 2>&1 || true
+    - |
+      if [ -f scripts/validate-pack.sh ]; then
+        bash scripts/validate-pack.sh .
+      else
+        echo "No validate-pack.sh found; skipping validation."
+      fi
+    - |
+      if command -v shellcheck >/dev/null 2>&1; then
+        shellcheck scripts/*.sh
+      else
+        echo "shellcheck not installed; skipping."
+      fi
+    - |
+      if command -v semgrep >/dev/null 2>&1; then
+        semgrep scan --config auto .
+      else
+        echo "semgrep not installed; skipping."
+      fi
+    - |
+      if command -v gitleaks >/dev/null 2>&1; then
+        gitleaks detect --source . --no-banner
+      else
+        echo "gitleaks not installed; skipping."
+      fi

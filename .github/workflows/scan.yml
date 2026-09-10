@@ -1,0 +1,46 @@
+name: opf-pack-scan
+
+on:
+  workflow_call:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate pack
+        run: |
+          if [ -f scripts/validate-pack.sh ]; then
+            bash scripts/validate-pack.sh .
+          else
+            echo "No validate-pack.sh found; skipping validation."
+          fi
+
+      - name: Shellcheck (if installed)
+        continue-on-error: false
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck scripts/*.sh
+          else
+            echo "shellcheck not installed; skipping."
+          fi
+
+      - name: Semgrep (if installed)
+        continue-on-error: false
+        run: |
+          if command -v semgrep >/dev/null 2>&1; then
+            semgrep scan --config auto .
+          else
+            echo "semgrep not installed; skipping."
+          fi
+
+      - name: Gitleaks (if installed)
+        continue-on-error: false
+        run: |
+          if command -v gitleaks >/dev/null 2>&1; then
+            gitleaks detect --source . --no-banner
+          else
+            echo "gitleaks not installed; skipping."
+          fi

@@ -1,0 +1,134 @@
+# Open Pack Format (OPF) v1: Host Layout and Distribution Topology
+
+**Status:** Non-normative companion
+**Format version:** OPF v1 (`pack_format: 1`)
+**Scope:** A recommended profile for how a harness lays out packs on disk and how an adopting organization distributes supporting infrastructure. This document is NOT normative. The normative contract lives in `opf-spec-v1.md`. Omnideck follows this profile.
+
+This companion doc carries two things that the spec deliberately keeps out of the normative contract: the recommended host layout profile (Section 1) and the recommended distribution topology (Section 2). A harness may adopt the spec without adopting this profile.
+
+---
+
+## 1. Host layout profile
+
+This is a recommended layout, not a requirement. It is the profile Omnideck follows.
+
+### 1.1 Two top-level roots
+
+Two top-level roots: `~/packs/` (no dot: the user's own, browsable, git-friendly pack workspace) and `~/.contrib/` (dot: hidden, locked, installed-from-elsewhere). The root/home of `~` may depend on whether the user is in a different workspace or project, but the structure is maintained relative to the home.
+
+Layout organized by provenance tier:
+
+```
+<native-root>/
+  artifact/
+    okf-app.html                      # standalone custom item, fully editable
+  data/
+    my-data/
+  skill/
+    quick-notes/
+  tool/
+  routine/
+    pack-sync/
+      routine.json
+
+  packs/
+    okf-kit/
+      manifest.json
+      artifact/okf-app.html           # real files live here
+      data/wiki/
+      skill/okf-skill/
+
+  .contrib/
+    acme/
+      onboarding-kit/
+        manifest.json
+        artifact/ data/ skill/ tool/ routine/
+```
+
+### 1.2 Provenance tiers
+
+Three trust tiers:
+
+- **Custom**: user-created items, editable in place. Standalone custom items live directly in their native per-type folder: no pack, no indirection, editable in place.
+- **Pack**: installed from a pack under `~/packs/`.
+- **Contrib**: imported from untrusted sources, locked, under `~/.contrib/<vendor>/<pack-name>/`. "Clone to customize" is the only path to Custom, landing as a standalone item in the native folder (or into a custom pack afterward, with materialize-and-symlink).
+
+### 1.3 Symlink materialization
+
+Combining items into a pack always materializes: Create Pack moves real files into `~/packs/<pack-name>/<type>/` and leaves a symlink at each old native location. The pack folder is self-contained from creation (ready to git-push or zip-export, the natural place for `git init`). Nothing referencing native paths breaks. Uniform behavior, one code path.
+
+Back in the native tree, a symlink:
+
+`<native-root>/artifact/okf-app.html -> <native-root>/packs/okf-kit/artifact/okf-app.html`
+
+General symlink guidance: a harness that presents pack items in per-type native locations MAY materialize them there via symlinks pointing into the pack folder. Symlinks keep existing references working, and lifecycle is enforced at delete time. This assumes a filesystem where symlinks are reliable; any surface without reliable symlinks owns an alternative.
+
+### 1.4 Symlink lifecycle
+
+Symlink lifecycle is enforced at delete time, nowhere else. Deleting an item deletes its symlink; deleting a pack deletes every member's symlink plus the pack folder. A dangling symlink is a bug. Out-of-band edits are the user's responsibility; no drift scanning (a filesystem-wide consistency check is separate scope).
+
+### 1.5 Native-tree collision rule
+
+When materializing an item into a native per-type location and the name already exists (from another pack or a standalone item), the harness MUST refuse and report, suggesting the namespaced form `<pack>-<item>`. It must never silently overwrite.
+
+### 1.6 Contrib packs
+
+Contrib packs are never symlinked into the native tree; they live hidden under `~/.contrib/<vendor>/<pack-name>/`, locked, and "clone to customize" is the only path to Custom.
+
+### 1.7 Migration notes
+
+If a harness previously stored runtime data inside the pack root, migrating to the mutable-state split (spec Section 4.2) means moving that data to the runtime data directory outside the pack root. This is a one-time, user-visible migration; the spec itself defines no migration machinery.
+
+---
+
+## 2. Distribution topology: core, common, template
+
+OPF defines the pack format. Adopting organizations also need supporting infrastructure around packs: where the scan rules live, how a new pack is scaffolded, and where shared content is stored. This section defines a recommended three-repo topology for that infrastructure. It is a pattern, not a requirement: a single-harness user can keep everything in one repo and ignore the split. The three repos are opf-core, pack-common, and pack-z-template. Scope note: pack-common is per user or per organization, never global. There is no shared global content repo in this topology. opf-core is a public repo anyone can use or fork; adopters create their own pack-common and pack-* repos.
+
+### 2.1 opf-core
+
+The infrastructure repo. It is public and harness-agnostic so any adopter can use it directly or fork it. It holds the reusable pieces that every pack depends on. Contents:
+
+- `docs/`: this plan document plus an operator runbook covering installing packs and responding to scan failures.
+- `ci/`: reusable pipeline templates. `ci/pack-scan.gitlab-ci.yml` is a GitLab CI template; `ci/pack-scan.github.yml` is a GitHub reusable workflow.
+- `templates/`: canonical pack skeletons.
+- `scripts/`: `new-pack.sh` scaffolds a new pack from pack-z-template (interactive: name, vendor, item kinds).
+- `skills/`: the canonical operator skills `pack-install/` and `create-pack/`. `pack-install` installs a pack (spec Section 8.1). `create-pack` scaffolds a new pack and checks for secrets before creating it: it flags likely secrets (keys, tokens, passwords) in the pack contents and refuses to create a pack that contains them.
+- `routines/`: scheduled task templates, each a subfolder with a `routine.json` descriptor, for example a nightly staleness check.
+
+The key mechanism is that every pack's CI config is a two-line include of core's scan pipeline. On GitLab the include is `include: project: opf-core, file: ci/pack-scan.gitlab-ci.yml`. On GitHub the pack has one job that uses the opf-core reusable workflow. The rationale is explicit: scan rules are single-sourced. A new dangerous-pattern rule or a tool version bump is fixed once in core, and every pack inherits it on the next pipeline run. Without this, each pack carries its own copy of the scan config and the copies drift apart. This is the same pattern as shared CI templates in any organization, and it is deliberately not overkill: the scan config is the security surface, and a security surface must have exactly one source of truth. One GitHub constraint applies: reusable workflows must be public or in the same organization as the pack that uses them.
+
+### 2.2 pack-common
+
+The per-user or per-organization shared-content repo. It holds content that is reused across multiple packs. Contents: `skills/` (SKILL.md folders), shared `scripts/`, `data/` (with a `manifest.json` declaring it a data-only pack), and `templates/`. One rule is stated prominently: a skill, script, or dataset moves into common only when a second pack needs it. There is no speculative sharing. Duplicate once, then promote on second use. The rationale is that premature sharing creates coupling and review burden for content nobody else consumes yet. Packs depend on common via the manifest `dependencies` field, using a vendor, name, version range, and source url (spec Section 3.2, Section 3.5).
+
+### 2.3 pack-z-template
+
+The minimal skeleton repo used by `new-pack.sh`. Contents: a placeholder `manifest.json` (name, version, and `pack_format` are filled in by the scaffolder), `README.md`, `OWNERS`, `CHANGELOG.md`, the two-line CI include, one example skill folder (SKILL.md plus optional `scripts/`), an empty `data/` folder, and a `.gitignore` that includes `.opf-env` and `.opf-lock`. The rationale is that a new pack goes from proposal to CI-green in one command, with the scan pipeline already wired. The "z-" prefix is a naming convention so the template sorts last in repo listings; adopters may rename it.
+
+### 2.4 Validator
+
+The validator script (`scripts/validate-pack.sh` in opf-core) is the enforcement point for format consistency. It checks: `manifest.json` schema (required fields, semver, `pack_format`), directory layout (`artifact/`, `data/`, `skill/` and so on, presence and placement), zip-slip-safe paths, the lifecycle script contract (executable bit, no surprising network use), `README.md` presence (a warning, not an error), `contents` against the actual folders (a warning, not an error), and secrets: if an `.opf-env` file exists it must be listed in `.gitignore`, and the scan flags likely secrets (keys, tokens, passwords). Exit codes are 0 for pass, 1 for error (CI-blocking), and 2 for warning. The same validator runs locally and in CI, so a pack that passes locally passes CI. The pack-install skill invokes the validator as its first step. Implementation note: start as a bash script calling `jsonschema` plus the available language tools from the opf-core scan profile (Section 2.6), then promote to a small CLI (python or go, single binary) once the checks outgrow bash.
+
+### 2.5 Scan staging notes
+
+The scan runs on the staged/incoming copy in a temporary location before it replaces the installed pack. Because install is atomic (spec Section 8.1), the staged copy is a temporary sibling directory, for example `<pack>.new`, and the scan runs there before any replacement. On failure the staging directory is removed and the old pack remains intact.
+
+### 2.6 opf-core scan profile
+
+This section is the companion to spec Section 7. It is non-normative: it recommends tooling and a graceful-degradation contract, while the normative guarantee (a deterministic, non-LLM scan runs before install; error blocks, warning flags, info records) lives in the spec.
+
+**Graceful degradation contract.** Tools that are not installed are skipped (a `command -v` check) with a note in the scan report. The manifest-schema and zip-slip path checks are the floor and run with zero tools installed; they are the only checks that must always run. `semgrep` (if present) is the only cross-language requirement, and even it degrades gracefully. No specific tool is required to be installed.
+
+**Recommended tools.**
+
+| Language | Lint / format | Typecheck | Security |
+|---|---|---|---|
+| shell | `shellcheck` (+ `shfmt` format check) | n/a | `shellcheck` severity rules |
+| python | `ruff` (lint + format) | `mypy` | `bandit` or `semgrep` |
+| go | `go vet` | `go vet` | `gosec`, `semgrep` |
+| js/ts | `eslint` (+ `typescript-eslint`) | `tsc --noEmit` | `semgrep` |
+| php | `php -l` (syntax) | `PHPStan` | `PHPStan` security rules |
+| ruby | `rubocop` | n/a | `brakeman` |
+
+`gitleaks` is the recommended secrets-detection tool for the scan. `semgrep` is the recommended cross-language engine for the dangerous-pattern checks in spec Section 7.1.

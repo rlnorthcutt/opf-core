@@ -1,0 +1,7 @@
+{
+  "name": "__PACK_NAME__",
+  "version": "0.1.0",
+  "pack_format": 1,
+  "description": "__DESCRIPTION__",
+  "vendor": "__VENDOR__"
+}

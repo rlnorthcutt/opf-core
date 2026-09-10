@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/opf-core/opf-core/main/schema/v1/manifest.schema.json",
+  "title": "OPF v1 manifest",
+  "description": "JSON Schema for the Open Pack Format (OPF) v1 manifest.json. Unknown top-level fields are preserved and ignored (layering extension path); they must not cause validation errors.",
+  "type": "object",
+  "properties": {
+    "pack_format": {
+      "type": "integer",
+      "const": 1,
+      "description": "OPF spec version this manifest conforms to. For OPF v1 this is 1. Validators select the schema by reading pack_format first."
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$",
+      "maxLength": 64,
+      "description": "Lowercase [a-z0-9._-], 1-64 characters, no leading or trailing separator, and never '.' or '..'. Used for identity and state keys."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
+      "description": "Semver. Compared against the installed .opf-lock version to decide update versus fresh install."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "One-line summary for card/list views."
+    },
+    "vendor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The publishing namespace, declared by the author. A namespace, not verified."
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri",
+      "description": "Project home page."
+    },
+    "repository": {
+      "type": "string",
+      "format": "uri",
+      "description": "Git or other source URL."
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1,
+      "description": "SPDX identifier or proprietary."
+    },
+    "categories": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Browse/filter grouping. Optional and non-load-bearing."
+    },
+    "images": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "First is the card thumbnail; the rest populate the detail carousel. Optional and non-load-bearing."
+    },
+    "contents": {
+      "type": "object",
+      "properties": {
+        "skill": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Skill identifiers, one per skill/<name>/ subfolder."
+        },
+        "tool": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Tool identifiers, one per tool/<name>/ subfolder."
+        },
+        "routine": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Routine identifiers, one per routine/<name>/ subfolder."
+        },
+        "agent": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Agent identifiers, one per agent item."
+        },
+        "artifact": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Artifact identifiers."
+        },
+        "data": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Data identifiers."
+        }
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "description": "Declared item kinds and their identifiers, for example { \"skill\": [\"report-format\"], \"routine\": [\"pack-sync\"] }. The validator checks contents against the actual folders as a warning, not an error."
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "vendor": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$",
+            "maxLength": 64,
+            "description": "The dependency pack's vendor namespace."
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$",
+            "maxLength": 64,
+            "description": "The dependency pack's name."
+          },
+          "version": { "type": "string", "description": "Semver range for the dependency." },
+          "url": { "type": "string", "description": "Source repository URL where the dependency pack can be fetched if not already installed." }
+        },
+        "required": ["vendor", "name", "version", "url"],
+        "additionalProperties": true,
+        "description": "Dependencies are other packs, declared by vendor, name, a version range, and a source url. Unknown fields are preserved per the spec's layering rule."
+      },
+      "description": "Dependencies are other packs, declared by vendor, name, a version range, and a source url."
+    },
+    "config": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "not": { "pattern": "^PACK_" },
+            "description": "Environment variable name exposed to scripts, routines, and tools at run time. Must not shadow PACK_* variables."
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable explanation shown when prompting the user."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether the value is mandatory. Default false."
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": true,
+        "description": "Required/optional configuration entries. Unknown fields are preserved per the spec's layering rule."
+      },
+      "description": "Required/optional configuration entries."
+    },
+    "scan": {
+      "type": "object",
+      "properties": {
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Path patterns excluded from content scanning. Glob-style matches and exact paths are supported. Exclusions never apply to executable file types; excluded files are still checksummed."
+        }
+      },
+      "additionalProperties": true,
+      "description": "Scan configuration. Unknown fields are preserved per the spec's layering rule."
+    },
+    "data_dir": {
+      "type": "string",
+      "description": "Preferred name for the runtime data directory. Optional hint."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Free-form key/value object for org-specific annotations. Non-load-bearing; never validated beyond being an object if present."
+    }
+  },
+  "required": ["name", "version", "pack_format", "description"],
+  "additionalProperties": true
+}
