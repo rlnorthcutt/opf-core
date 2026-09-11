@@ -1,0 +1,33 @@
+name: opf-core self-test
+
+# Runs the e2e smoke test against this repo's own scripts on every push/PR.
+# It runs TWICE: once as-is (no scanners installed, exercising the
+# fallback/NOTE code paths), then again after installing the real
+# semgrep/gitleaks/shellcheck via ci-install-scanners.sh, so the actual
+# scanner code paths in install-pack.sh get exercised for real in CI, not
+# just on a dev machine that may not have those tools.
+#
+# What this does NOT cover: the workflow_call plumbing in scan.yml itself,
+# or ci/pack-scan.gitlab-ci.yml's `include:` mechanism - both need a real
+# separate pack repo acting as the caller (tracked in TODO.md).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout opf-core
+        uses: actions/checkout@v4
+
+      - name: "Smoke test (degraded: no scanners installed)"
+        run: bash scripts/e2e-smoke-test.sh
+
+      - name: Install real scanners (semgrep, gitleaks, shellcheck)
+        run: bash scripts/ci-install-scanners.sh
+
+      - name: Smoke test (real semgrep/gitleaks/shellcheck code paths)
+        run: bash scripts/e2e-smoke-test.sh
