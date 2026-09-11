@@ -57,11 +57,13 @@ Everything else in this spec is an optional profile. This section defines what "
 | **Harness** | Any software that reads, installs, or executes packs (a CLI, an editor, an agent product). |
 | **Vendor** | The publishing namespace a pack is authored under. It is DECLARED in the manifest as the author's choice. It is a namespace, not a verified identity. |
 | **Provenance** | Where a pack came from and its trust tier. Provenance is OBSERVED at install time and recorded in `.opf-lock` (Section 9.1). |
-| **Trust tier** | The three provenance tiers: **Custom** (user-created, editable in place), **Pack** (installed from a pack), and **Contrib** (imported from untrusted sources and locked). The details live in the companion doc; the spec only requires recording a source. |
-| **Locked / editable** | Per-item (and per-pack) flag: whether the agent or user can modify it in place, versus needing to clone it into their own custom space first. |
+| **Trust tier** | The two provenance tiers: **Owned** (user-created, editable in place; the user or their agent is the update path) and **External** (installed from elsewhere, locked/read-only for the consumer; updated only by the pack owner pushing new versions). The details live in the companion doc; the spec only requires recording a source. |
+| **Locked / editable** | Per-item (and per-pack) flag: whether the agent or user can modify it in place, versus needing to clone it into their own owned space first. |
 | **Lifecycle script** | An optional executable (`install.sh`, and optionally `uninstall.sh`) run by the harness at a defined point. |
 
 Item kinds in scope: Artifact, Skill, Tool, Data, Routine (scripts run by cron), and Agent profile. **Skill is a special case**: the open Agent Skills format (`SKILL.md`, YAML frontmatter, optional `scripts/`, `references/`, `assets/`) is already adopted across other agent products with its own registry (skills.sh). Skill packaging defaults to wrapping or adopting that format rather than inventing a new one. Each skill lives in its own subfolder, `skill/<skill-id>/SKILL.md`, both in the native tree and inside packs.
+
+**Items are not in a pack by default.** Creating a skill, tool, routine, or artifact produces a standalone item; packing is an explicit act (via `create-pack` or by hand). Standalone items live wherever the harness keeps user-created things; the spec does not prescribe the location. A named-folder convention is suggested in the reference doc.
 
 There is no distinct "Script" item kind. A script belongs in `tool/` (generic or random scripts/tools), in `routine/` (if invoked by a cron/scheduler), or inside the skill's own folder (if unique to that skill).
 
@@ -182,7 +184,7 @@ A pack is a directory. The only required file is `manifest.json`. Everything els
   .opf-env               # harness-written env file (gitignored), not part of the pack
 ```
 
-A harness may present pack items in per-type native locations; see the host layout companion doc.
+A harness MAY present pack items in per-type native locations via symlinks; see the reference doc.
 
 **Descriptor = subfolder rule.** An item is a subfolder when it contains a known descriptor file: `SKILL.md` for skills, `tool.json` for tools, `routine.json` for routines, and `AGENT.md` (or a harness-defined agent format) for agents. Artifacts and data are plain files or folders with no descriptor. This gives uniform recognition for agnostic-repo import (Section 6): a folder containing a known descriptor file is an item.
 
@@ -194,7 +196,7 @@ Distributed content: user-facing outputs and templates the pack produces, such a
 
 `data/` is pack-owned content: it is replaced on update and covered by checksums. Files are opaque to the harness; the harness does not parse them. Runtime/mutable state belongs in `PACK_DATA_DIR` outside the pack root.
 
-Runtime/mutable state lives OUTSIDE the pack root. `PACK_DATA_DIR` points to a harness/user-chosen location outside the pack directory. The harness or skill resolves it, defaulting to a sibling of the pack folder, for example `<pack>-data`. The pack MAY declare a preferred name in the manifest `data_dir` field (Section 4.2). A pack whose `data/` is intended as a seed may have `install.sh` copy or link it into `PACK_DATA_DIR`, providing the mutable mechanism itself. Consumers of an installed (contrib) pack treat the pack as immutable/read-only, and the pack owner updates data by pushing new versions. Because runtime data lives outside the pack root, update-by-replace never destroys runtime data, and checksums cover the whole pack root meaningfully.
+Runtime/mutable state lives OUTSIDE the pack root. `PACK_DATA_DIR` points to a harness/user-chosen location outside the pack directory. The harness or skill resolves it, defaulting to a sibling of the pack folder, for example `<pack>-data`. The pack MAY declare a preferred name in the manifest `data_dir` field (Section 4.2). A pack whose `data/` is intended as a seed may have `install.sh` copy or link it into `PACK_DATA_DIR`, providing the mutable mechanism itself. Consumers of an installed external pack treat the pack as immutable/read-only, and the pack owner updates data by pushing new versions. Because runtime data lives outside the pack root, update-by-replace never destroys runtime data, and checksums cover the whole pack root meaningfully.
 
 ### 5.3 `README.md`
 
@@ -226,11 +228,11 @@ Not every repo a user pulls from carries a pack manifest: someone's GitHub colle
 
 - Each descriptor-bearing item kind has a minimal, standalone, self-describing descriptor identifying it without a pack manifest (Section 5.4): a folder or file that says "I am a Tool" (or Routine, Agent) the way `SKILL.md` does for Skill. Skill, Tool, Routine, and Agent have these descriptors defined in Section 5.4. Artifact and data items are recognized by folder presence or user mapping.
 - Import walks the cloned repo, recognizes whichever descriptors it finds (a repo can mix kinds), and synthesizes a `manifest.json` from what it found rather than requiring the source to author one.
-- Because it arrived from outside, the result lands as a Contrib pack, locked by default, through the same security scan: an absent manifest is a reason for MORE caution, not less.
+- Because it arrived from outside, the result lands as an External pack, locked by default, through the same security scan: an absent manifest is a reason for MORE caution, not less.
 - Manifest-present and agnostic import are the same mechanism: a manifest is authored up front by the source, or inferred at import time from recognized descriptors.
 - An agnostic import gets a vendor: the importer infers the vendor from the source repo owner or org when known, otherwise it prompts the user. The inferred value is written INTO the synthesized manifest as its declared vendor. It is declared, not derived thereafter.
 
-The Contrib tier and its location are described in the host layout companion doc.
+The External tier and its location are described in the host layout companion doc.
 
 ---
 
@@ -442,7 +444,7 @@ Omnideck is the reference implementation and ships OPF. This statement is non-no
 
 ## 13. Host layout
 
-The recommended host layout profile (the `~/packs/` and `~/.contrib/` roots, provenance tiers, symlink materialization and its lifecycle, and the native-tree collision rule) is non-normative and lives in the host layout companion doc.
+The recommended host layout profile (the `~/packs/` and `~/.packs-external/` roots, provenance tiers, symlink materialization and its lifecycle, and the native-tree collision rule) is non-normative and lives in the host layout companion doc.
 
 ---
 

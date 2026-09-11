@@ -10,18 +10,18 @@ This companion doc carries two things that the spec deliberately keeps out of th
 
 ## 1. Host layout profile
 
-This is a recommended layout, not a requirement. It is the profile Omnideck follows.
+This is a reference and suggestions doc, not a requirement. It is the profile Omnideck follows. A harness may adopt the spec without adopting any of these suggestions.
 
 ### 1.1 Two top-level roots
 
-Two top-level roots: `~/packs/` (no dot: the user's own, browsable, git-friendly pack workspace) and `~/.contrib/` (dot: hidden, locked, installed-from-elsewhere). The root/home of `~` may depend on whether the user is in a different workspace or project, but the structure is maintained relative to the home.
+Two top-level roots: `~/packs/` (no dot: the user's own, browsable, git-friendly pack workspace) and `~/.packs-external/` (dot: hidden, locked, installed-from-elsewhere). The dot prefix signals that the contents are not yours to edit; the "packs" stem keeps the folder visually associated with `packs/`. The root/home of `~` may depend on whether the user is in a different workspace or project, but the structure is maintained relative to the home.
 
 Layout organized by provenance tier:
 
 ```
 <native-root>/
   artifact/
-    okf-app.html                      # standalone custom item, fully editable
+    okf-app.html                      # standalone owned item, fully editable
   data/
     my-data/
   skill/
@@ -38,46 +38,55 @@ Layout organized by provenance tier:
       data/wiki/
       skill/okf-skill/
 
-  .contrib/
+  .packs-external/
     acme/
       onboarding-kit/
         manifest.json
         artifact/ data/ skill/ tool/ routine/
 ```
 
-### 1.2 Provenance tiers
+### 1.2 Folder conventions
 
-Three trust tiers:
+Items live in named folders at a root (system root, project/workspace root, whatever the harness uses), for example `skill/quick-notes/`, `tool/pdf-convert/`. This is a good-practice suggestion, not part of the spec. The spec does not prescribe where standalone items live; a harness defines its own locations.
 
-- **Custom**: user-created items, editable in place. Standalone custom items live directly in their native per-type folder: no pack, no indirection, editable in place.
-- **Pack**: installed from a pack under `~/packs/`.
-- **Contrib**: imported from untrusted sources, locked, under `~/.contrib/<vendor>/<pack-name>/`. "Clone to customize" is the only path to Custom, landing as a standalone item in the native folder (or into a custom pack afterward, with materialize-and-symlink).
+### 1.3 Provenance tiers
 
-### 1.3 Symlink materialization
+Two trust tiers:
 
-Combining items into a pack always materializes: Create Pack moves real files into `~/packs/<pack-name>/<type>/` and leaves a symlink at each old native location. The pack folder is self-contained from creation (ready to git-push or zip-export, the natural place for `git init`). Nothing referencing native paths breaks. Uniform behavior, one code path.
+- **Owned**: user-created items, editable in place. Standalone owned items live directly in their native per-type folder: no pack, no indirection, editable in place. The user (or their agent) is the update path.
+- **External**: installed from elsewhere, locked/read-only for the consumer, under `~/.packs-external/<vendor>/<pack-name>/`. Updated only by the pack owner pushing new versions; consumers never edit in place. "Clone to customize" is the only path to Owned, landing as a standalone item in the native folder (or into an owned pack afterward, with materialize-and-symlink).
+
+### 1.4 Symlink materialization
+
+Symlinks are suggested in one specific situation: when a pack is created and existing items are moved into the pack folder. In that case the system/tool/script SHOULD leave a symlink at each item's old location pointing into the pack folder, so that existing references (paths in configs, routines, tools, user muscle memory) do not break.
+
+This is a suggestion (SHOULD), not a requirement, and it applies only to that create-pack move situation. Harnesses that manage references differently, or have no per-type native locations, do not need symlinks at all.
+
+Create Pack moves real files into `~/packs/<pack-name>/<type>/` and leaves a symlink at each old native location. The pack folder is self-contained from creation (ready to git-push or zip-export, the natural place for `git init`). Nothing referencing native paths breaks.
 
 Back in the native tree, a symlink:
 
 `<native-root>/artifact/okf-app.html -> <native-root>/packs/okf-kit/artifact/okf-app.html`
 
-General symlink guidance: a harness that presents pack items in per-type native locations MAY materialize them there via symlinks pointing into the pack folder. Symlinks keep existing references working, and lifecycle is enforced at delete time. This assumes a filesystem where symlinks are reliable; any surface without reliable symlinks owns an alternative.
+This assumes a filesystem where symlinks are reliable; any surface without reliable symlinks owns an alternative.
 
-### 1.4 Symlink lifecycle
+### 1.5 Symlink lifecycle
 
-Symlink lifecycle is enforced at delete time, nowhere else. Deleting an item deletes its symlink; deleting a pack deletes every member's symlink plus the pack folder. A dangling symlink is a bug. Out-of-band edits are the user's responsibility; no drift scanning (a filesystem-wide consistency check is separate scope).
+Symlink lifecycle is enforced at delete time, nowhere else, and only in the create-pack move situation above. Deleting an item deletes its symlink; deleting a pack deletes every member's symlink plus the pack folder. A dangling symlink is a bug. Out-of-band edits are the user's responsibility; no drift scanning (a filesystem-wide consistency check is separate scope).
 
-### 1.5 Native-tree collision rule
+### 1.6 Native-tree collision rule
 
-When materializing an item into a native per-type location and the name already exists (from another pack or a standalone item), the harness MUST refuse and report, suggesting the namespaced form `<pack>-<item>`. It must never silently overwrite.
+When materializing an item into a native per-type location and the name already exists (from another pack or a standalone item), the harness MUST refuse and report, suggesting the namespaced form `<pack>-<item>`. It must never silently overwrite. This rule applies in the same create-pack move situation as the symlink suggestion.
 
-### 1.6 Contrib packs
+### 1.7 External packs
 
-Contrib packs are never symlinked into the native tree; they live hidden under `~/.contrib/<vendor>/<pack-name>/`, locked, and "clone to customize" is the only path to Custom.
+External packs are never symlinked into the native tree; they live hidden under `~/.packs-external/<vendor>/<pack-name>/`, locked, and "clone to customize" is the only path to Owned.
 
-### 1.7 Migration notes
+### 1.8 Migration notes
 
 If a harness previously stored runtime data inside the pack root, migrating to the mutable-state split (spec Section 4.2) means moving that data to the runtime data directory outside the pack root. This is a one-time, user-visible migration; the spec itself defines no migration machinery.
+
+**Rename note.** The two-tier model replaces an earlier three-tier model. The External tier was formerly called "contrib"; the `~/.contrib/` folder is now suggested as `~/.packs-external/`. Existing installs under `~/.contrib/` can be moved to `~/.packs-external/` at the harness's discretion.
 
 ---
 
