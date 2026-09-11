@@ -13,7 +13,7 @@
 #   (e) version matches the official semver regex
 #   (f) path safety: no file path resolves outside the pack root
 #       (symlink targets are resolved fully with realpath/readlink -f)
-#   (g) if .opf-env exists, .gitignore must contain .opf-env
+#   (g) if .opf-env or .opf-lock exists, .gitignore must contain it
 #   (h) if .opf-lock exists, warn it is installer-written state and should not be committed
 #   (i) if a contents field is present, warn if declared items do not match
 #       actual folders (data/artifact use file-or-dir existence; the rest use isdir)
@@ -132,6 +132,14 @@ fi
 # --- (f) path safety: no path resolves outside the pack root ---------------
 # Resolve symlink targets fully (realpath, or readlink -f fallback) and verify
 # the resolved path stays under the pack root. Handles chains and "..".
+# NOTE: this walks files already on disk under PACK_DIR, so it catches a
+# symlink inside an already-extracted pack that points outside the pack root.
+# It is NOT a substitute for safe archive extraction: a zip/tar entry that
+# escapes the pack root during a naive extraction (e.g. "../../etc/passwd")
+# writes outside PACK_DIR and is never seen by this walk, because it never
+# lands inside the tree being walked. Whatever unpacks the archive MUST
+# reject or normalize escaping entries before this validator ever runs (spec
+# Section 7).
 PACK_REAL="$(resolve_path "$PACK_DIR")"
 while IFS= read -r -d '' entry; do
   rel="${entry#"$PACK_DIR"/}"
@@ -145,14 +153,16 @@ while IFS= read -r -d '' entry; do
   esac
 done < <(find "$PACK_DIR" -print0)
 
-# --- (g) .opf-env must be gitignored ---------------------------------------
-if [[ -e "$PACK_DIR/.opf-env" ]]; then
-  if [[ -f "$PACK_DIR/.gitignore" ]] && grep -q '^\.opf-env$' "$PACK_DIR/.gitignore"; then
-    :
-  else
-    error ".opf-env exists but .gitignore does not contain .opf-env"
+# --- (g) .opf-env and .opf-lock must be gitignored --------------------------
+for state_file in .opf-env .opf-lock; do
+  if [[ -e "$PACK_DIR/$state_file" ]]; then
+    if [[ -f "$PACK_DIR/.gitignore" ]] && grep -qxF "$state_file" "$PACK_DIR/.gitignore"; then
+      :
+    else
+      error "$state_file exists but .gitignore does not contain $state_file"
+    fi
   fi
-fi
+done
 
 # --- (h) .opf-lock is installer-written state -------------------------------
 if [[ -e "$PACK_DIR/.opf-lock" ]]; then

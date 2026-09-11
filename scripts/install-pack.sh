@@ -1,0 +1,437 @@
+#!/usr/bin/env bash
+#
+# install-pack.sh - deterministically install or update ONE OPF pack.
+#
+# This is the hard-enforcement counterpart to skills/pack-install/SKILL.md:
+# the skill is prose an agent follows; this script mechanically performs the
+# deterministic steps (validate, stage, scan, approve, install, lock, atomic
+# swap) and refuses to proceed on failure via real exit codes, not an agent's
+# discretion. A harness that can run shell scripts but not skills can call
+# this directly.
+#
+# Usage:
+#   scripts/install-pack.sh <source-dir> <install-dir> [options]
+#
+# Options:
+#   --yes                 Approve the install.sh review and any scan/validator
+#                          warnings non-interactively. The caller (a human, or
+#                          a skill that already showed the content to a human)
+#                          is asserting that review happened. Without --yes
+#                          and without a TTY, the script aborts rather than
+#                          silently proceeding.
+#   --config KEY=VALUE    Provide a resolved config value (repeatable).
+#   --data-dir DIR        Override PACK_DATA_DIR (default: a sibling of
+#                          install-dir, named from the manifest's data_dir
+#                          hint, or "<install-dir>-data").
+#   --allow-downgrade     Allow installing a version lower than installed.
+#   -h, --help            Show this help.
+#
+# Scope: this script installs ONE pack. It does NOT resolve dependencies
+# (spec Section 4.5) - install dependencies first, in closure order, with
+# separate invocations, or use skills/pack-install for full closure handling.
+#
+# Exit codes: 0 success, 1 failure/abort (validation error, scan error,
+# declined approval, downgrade refused, install.sh failure).
+#
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: install-pack.sh <source-dir> <install-dir> [options]
+
+Options:
+  --yes                 Non-interactive approval for install.sh review and
+                         scan/validator warnings.
+  --config KEY=VALUE    Provide a resolved config value (repeatable).
+  --data-dir DIR        Override PACK_DATA_DIR.
+  --allow-downgrade     Allow installing a lower version than installed.
+  -h, --help            Show this help.
+EOF
+}
+
+YES=0
+DATA_DIR_OVERRIDE=""
+ALLOW_DOWNGRADE=0
+CONFIG_KV=()
+POSITIONAL=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --yes)
+      YES=1
+      shift
+      ;;
+    --config)
+      [[ $# -ge 2 ]] || { echo "ERROR: --config requires KEY=VALUE" >&2; exit 1; }
+      CONFIG_KV+=("$2")
+      shift 2
+      ;;
+    --data-dir)
+      [[ $# -ge 2 ]] || { echo "ERROR: --data-dir requires a value" >&2; exit 1; }
+      DATA_DIR_OVERRIDE="$2"
+      shift 2
+      ;;
+    --allow-downgrade)
+      ALLOW_DOWNGRADE=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "ERROR: unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+
+SOURCE_DIR="${POSITIONAL[0]:-}"
+INSTALL_DIR_ARG="${POSITIONAL[1]:-}"
+if [[ -z "$SOURCE_DIR" || -z "$INSTALL_DIR_ARG" ]]; then
+  usage
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VALIDATOR="$SCRIPT_DIR/validate-pack.sh"
+
+SOURCE_DIR="$(cd "$SOURCE_DIR" 2>/dev/null && pwd)" || {
+  echo "ERROR: source directory does not exist or is not accessible: $SOURCE_DIR" >&2
+  exit 1
+}
+
+INSTALL_PARENT="$(cd "$(dirname "$INSTALL_DIR_ARG")" 2>/dev/null && pwd)" || {
+  echo "ERROR: install directory's parent does not exist: $(dirname "$INSTALL_DIR_ARG")" >&2
+  exit 1
+}
+INSTALL_DIR="$INSTALL_PARENT/$(basename "$INSTALL_DIR_ARG")"
+
+semver_cmp() {
+  # Prints -1, 0, or 1 for $1 <=> $2 per semver precedence (build metadata ignored).
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+
+def parse(v):
+    m = re.match(r'^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$', v)
+    if not m:
+        raise SystemExit(f"invalid semver: {v}")
+    major, minor, patch, pre = m.groups()
+    return (int(major), int(minor), int(patch), pre)
+
+def pre_key(pre):
+    if pre is None:
+        return None
+    parts = []
+    for ident in pre.split('.'):
+        parts.append((0, int(ident)) if ident.isdigit() else (1, ident))
+    return parts
+
+a_major, a_minor, a_patch, a_pre = parse(sys.argv[1])
+b_major, b_minor, b_patch, b_pre = parse(sys.argv[2])
+a_core, b_core = (a_major, a_minor, a_patch), (b_major, b_minor, b_patch)
+
+if a_core != b_core:
+    print(-1 if a_core < b_core else 1)
+elif a_pre is None and b_pre is None:
+    print(0)
+elif a_pre is None:
+    print(1)
+elif b_pre is None:
+    print(-1)
+else:
+    ak, bk = pre_key(a_pre), pre_key(b_pre)
+    print(0 if ak == bk else (-1 if ak < bk else 1))
+PY
+}
+
+confirm() {
+  # confirm "prompt" - honors --yes; otherwise requires an interactive TTY answer.
+  local prompt="$1"
+  if [[ $YES -eq 1 ]]; then
+    return 0
+  fi
+  if [[ -t 0 ]]; then
+    local ans
+    read -r -p "$prompt [y/N] " ans
+    [[ "$ans" =~ ^[Yy]$ ]]
+    return $?
+  fi
+  echo "ERROR: non-interactive and no --yes; refusing to proceed without explicit approval." >&2
+  return 1
+}
+
+# --- Validate the source pack ------------------------------------------------
+echo "==> Validating source pack"
+set +e
+"$VALIDATOR" "$SOURCE_DIR"
+validator_rc=$?
+set -e
+if [[ $validator_rc -eq 1 ]]; then
+  echo "ERROR: validation failed; aborting install." >&2
+  exit 1
+elif [[ $validator_rc -eq 2 ]]; then
+  confirm "Validator produced warnings (above). Proceed anyway?" || { echo "Aborted." >&2; exit 1; }
+fi
+
+MANIFEST="$SOURCE_DIR/manifest.json"
+read_field() {
+  python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print(v if v is not None else "")' "$MANIFEST" "$1"
+}
+PACK_NAME="$(read_field name)"
+PACK_VERSION="$(read_field version)"
+DATA_DIR_HINT="$(read_field data_dir)"
+
+CONFIG_ENTRIES="$(python3 - "$MANIFEST" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+for e in (m.get("config") or []):
+    if isinstance(e, dict) and e.get("name"):
+        print(f"{e['name']}\t{1 if e.get('required') else 0}")
+PY
+)"
+
+DEP_COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("dependencies") or []))' "$MANIFEST")"
+if [[ "$DEP_COUNT" -gt 0 ]]; then
+  echo "NOTE: manifest declares $DEP_COUNT dependencies. This script does not resolve"
+  echo "NOTE: dependencies (spec Section 4.5); install each one first, in closure"
+  echo "NOTE: order, or use skills/pack-install for full closure handling."
+fi
+
+# --- Update / downgrade decision ---------------------------------------------
+IS_UPDATE=0
+if [[ -e "$INSTALL_DIR" ]]; then
+  if [[ ! -f "$INSTALL_DIR/.opf-lock" ]]; then
+    echo "ERROR: $INSTALL_DIR already exists but has no .opf-lock; refusing to overwrite an unmanaged directory." >&2
+    exit 1
+  fi
+  IS_UPDATE=1
+  INSTALLED_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' "$INSTALL_DIR/.opf-lock")"
+  cmp="$(semver_cmp "$PACK_VERSION" "$INSTALLED_VERSION")"
+  if [[ "$cmp" -lt 0 && $ALLOW_DOWNGRADE -ne 1 ]]; then
+    echo "ERROR: incoming version $PACK_VERSION is lower than installed version $INSTALLED_VERSION; refusing downgrade (pass --allow-downgrade to override)." >&2
+    exit 1
+  fi
+fi
+
+# --- Data dir -----------------------------------------------------------------
+if [[ -n "$DATA_DIR_OVERRIDE" ]]; then
+  PACK_DATA_DIR="$DATA_DIR_OVERRIDE"
+elif [[ -n "$DATA_DIR_HINT" ]]; then
+  PACK_DATA_DIR="$(dirname "$INSTALL_DIR")/$DATA_DIR_HINT"
+else
+  PACK_DATA_DIR="${INSTALL_DIR}-data"
+fi
+mkdir -p "$PACK_DATA_DIR"
+
+# --- Stage --------------------------------------------------------------------
+STAGING_DIR="${INSTALL_DIR}.new"
+if [[ -e "$STAGING_DIR" ]]; then
+  echo "ERROR: staging directory already exists: $STAGING_DIR (a previous install may have failed mid-way; inspect and remove it manually)." >&2
+  exit 1
+fi
+echo "==> Staging pack into $STAGING_DIR"
+cp -R "$SOURCE_DIR" "$STAGING_DIR"
+rm -f "$STAGING_DIR/.opf-env" "$STAGING_DIR/.opf-lock"
+trap 'rm -rf "$STAGING_DIR"' EXIT
+
+# --- Scan -----------------------------------------------------------------------
+echo "==> Scanning staged pack"
+scan_errors=0
+scan_warnings=0
+
+if command -v semgrep >/dev/null 2>&1; then
+  if ! semgrep scan --config auto --error --quiet --exclude .opf-env --exclude .opf-lock "$STAGING_DIR"; then
+    echo "WARNING: semgrep reported findings (above). Default-ruleset findings are"
+    echo "WARNING: treated as warnings requiring acknowledgment here, not automatic"
+    echo "WARNING: hard blocks - curate a dedicated OPF ruleset for stricter,"
+    echo "WARNING: spec-aligned error/warning severity mapping."
+    scan_warnings=$((scan_warnings + 1))
+  fi
+else
+  echo "NOTE: semgrep not installed; skipping dangerous-pattern static analysis."
+fi
+
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks detect --source "$STAGING_DIR" --no-git --redact -v; then
+    echo "ERROR: gitleaks detected likely secrets in the staged pack; refusing to install." >&2
+    scan_errors=$((scan_errors + 1))
+  fi
+else
+  echo "NOTE: gitleaks not installed; falling back to a pattern grep for likely secrets"
+  echo "NOTE: (mirrors the fallback in scripts/new-pack.sh)."
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      "$STAGING_DIR"/.opf-env|"$STAGING_DIR"/.opf-lock|*/.git/*) continue ;;
+    esac
+    if grep -InE 'AKIA[0-9A-Z]{16}|-----BEGIN (RSA|EC|OPENSSH|PGP) PRIVATE KEY|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|(password|passwd|secret|api[_-]?key|token)[[:space:]]*[=:][[:space:]]*["'"'"'][^"'"'"']{8,}' "$f" 2>/dev/null; then
+      scan_errors=$((scan_errors + 1))
+    fi
+  done < <(find "$STAGING_DIR" -type f -print0)
+fi
+
+if [[ $scan_errors -gt 0 ]]; then
+  echo "ERROR: scan found $scan_errors error-class finding(s); aborting install." >&2
+  exit 1
+fi
+
+if [[ $scan_warnings -gt 0 ]]; then
+  confirm "Scan produced warnings (above). Proceed anyway?" || { echo "Aborted." >&2; exit 1; }
+fi
+
+# --- install.sh approval --------------------------------------------------------
+INSTALL_SCRIPT="$STAGING_DIR/install.sh"
+if [[ -f "$INSTALL_SCRIPT" ]]; then
+  echo "==> install.sh present; approval required."
+  if [[ $IS_UPDATE -eq 1 && -f "$INSTALL_DIR/install.sh" ]]; then
+    echo "--- diff against previously installed install.sh ---"
+    diff -u "$INSTALL_DIR/install.sh" "$INSTALL_SCRIPT" || true
+  else
+    echo "--- full text of install.sh ---"
+    cat "$INSTALL_SCRIPT"
+  fi
+  echo "--- end install.sh ---"
+  confirm "Approve and run install.sh above?" || { echo "Aborted: install.sh not approved." >&2; exit 1; }
+fi
+
+# --- Resolve config -------------------------------------------------------------
+declare -A CONFIG_VALUES=()
+for kv in "${CONFIG_KV[@]:-}"; do
+  [[ -z "$kv" ]] && continue
+  CONFIG_VALUES["${kv%%=*}"]="${kv#*=}"
+done
+
+missing_required=()
+config_env_assignments=()
+if [[ -n "$CONFIG_ENTRIES" ]]; then
+  while IFS=$'\t' read -r cname crequired; do
+    [[ -z "$cname" ]] && continue
+    if [[ -n "${CONFIG_VALUES[$cname]+x}" ]]; then
+      config_env_assignments+=("CONFIG_${cname}=${CONFIG_VALUES[$cname]}")
+    elif [[ "$crequired" == "1" ]]; then
+      missing_required+=("$cname")
+    fi
+  done <<< "$CONFIG_ENTRIES"
+fi
+
+if [[ ${#missing_required[@]} -gt 0 ]]; then
+  echo "ERROR: missing required config value(s): ${missing_required[*]}" >&2
+  echo "ERROR: provide each with --config NAME=value." >&2
+  exit 1
+fi
+
+# --- Write .opf-env --------------------------------------------------------------
+{
+  echo "PACK_ROOT=$STAGING_DIR"
+  echo "PACK_NAME=$PACK_NAME"
+  echo "PACK_DATA_DIR=$PACK_DATA_DIR"
+  echo "PACK_VERSION=$PACK_VERSION"
+  echo "PACK_INSTALL_DIR=$INSTALL_DIR"
+  for kv in "${config_env_assignments[@]:-}"; do
+    [[ -z "$kv" ]] && continue
+    echo "$kv"
+  done
+} > "$STAGING_DIR/.opf-env"
+
+# --- Run install.sh ---------------------------------------------------------------
+if [[ -f "$INSTALL_SCRIPT" ]]; then
+  echo "==> Running install.sh"
+  ENV_ARGS=(
+    PATH="$PATH"
+    HOME="${HOME:-/root}"
+    PACK_ROOT="$STAGING_DIR"
+    PACK_NAME="$PACK_NAME"
+    PACK_DATA_DIR="$PACK_DATA_DIR"
+    PACK_VERSION="$PACK_VERSION"
+    PACK_INSTALL_DIR="$INSTALL_DIR"
+  )
+  if [[ ${#config_env_assignments[@]} -gt 0 ]]; then
+    ENV_ARGS+=("${config_env_assignments[@]}")
+  fi
+  set +e
+  env "${ENV_ARGS[@]}" bash -c 'cd "$PACK_ROOT" && exec ./install.sh'
+  install_rc=$?
+  set -e
+  if [[ $install_rc -ne 0 ]]; then
+    echo "ERROR: install.sh exited $install_rc; install failed." >&2
+    exit 1
+  fi
+  echo "install.sh exited 0."
+fi
+
+# --- Write .opf-lock ----------------------------------------------------------------
+echo "==> Writing .opf-lock"
+SOURCE_TYPE="local"
+SOURCE_URL=""
+SOURCE_COMMIT=""
+if git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  SOURCE_TYPE="git"
+  SOURCE_URL="$(git -C "$SOURCE_DIR" config --get remote.origin.url 2>/dev/null || true)"
+  SOURCE_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || true)"
+fi
+
+python3 - "$STAGING_DIR" "$PACK_NAME" "$PACK_VERSION" "$INSTALL_DIR" "$PACK_DATA_DIR" "$SOURCE_TYPE" "$SOURCE_URL" "$SOURCE_COMMIT" "$SOURCE_DIR" <<'PY'
+import hashlib, json, os, sys, datetime
+
+staging, name, version, install_dir, data_dir, source_type, source_url, source_commit, source_dir = sys.argv[1:10]
+
+checksums = {}
+skip_names = {".opf-env", ".opf-lock"}
+for root, dirs, files in os.walk(staging):
+    if ".git" in dirs:
+        dirs.remove(".git")
+    for fname in files:
+        if fname in skip_names:
+            continue
+        full = os.path.join(root, fname)
+        rel = os.path.relpath(full, staging)
+        h = hashlib.sha256()
+        with open(full, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                h.update(chunk)
+        checksums[rel] = f"sha256:{h.hexdigest()}"
+
+source = {"type": source_type}
+if source_url:
+    source["url"] = source_url
+if source_commit:
+    source["commit"] = source_commit
+if source_type == "local":
+    source["path"] = source_dir
+
+lock = {
+    "name": name,
+    "version": version,
+    "installed_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "source": source,
+    "dependencies": [],
+    "data_dir": data_dir,
+    "checksums": checksums,
+}
+
+with open(os.path.join(staging, ".opf-lock"), "w") as fh:
+    json.dump(lock, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+
+# --- Swap ------------------------------------------------------------------------
+echo "==> Swapping staged pack into place"
+if [[ -e "$INSTALL_DIR" ]]; then
+  OLD_DIR="${INSTALL_DIR}.old"
+  rm -rf "$OLD_DIR"
+  mv "$INSTALL_DIR" "$OLD_DIR"
+  mv "$STAGING_DIR" "$INSTALL_DIR"
+  rm -rf "$OLD_DIR"
+else
+  mv "$STAGING_DIR" "$INSTALL_DIR"
+fi
+trap - EXIT
+
+echo
+echo "Installed $PACK_NAME $PACK_VERSION at $INSTALL_DIR"
+echo "PACK_DATA_DIR: $PACK_DATA_DIR"

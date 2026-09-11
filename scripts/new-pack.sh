@@ -3,11 +3,14 @@
 # new-pack.sh - scaffold a new OPF pack from templates/pack-z-template/.
 #
 # Usage:
-#   scripts/new-pack.sh <name> [vendor] [-d <description>] [--allow-secrets]
+#   scripts/new-pack.sh <name> [vendor] [-d <description>] [--with <kinds>] [--allow-secrets]
 #
 # Copies the template to ./<name>, replaces placeholder tokens in all template
 # text files (manifest.json, README.md, CHANGELOG.md, OWNERS, skill/example/SKILL.md),
-# runs a secrets gate, and prints next steps.
+# creates a .gitkeep-tracked subfolder for each item kind named in --with
+# (comma-separated: tool, routine, agent, artifact - skill and data are
+# already present in the template), runs a secrets gate, and prints next
+# steps.
 #
 # Secrets gate: after scaffolding, the pack is scanned for likely secrets
 # (gitleaks if available, otherwise a grep fallback). If findings are present
@@ -19,8 +22,11 @@ set -euo pipefail
 NAME=""
 VENDOR=""
 DESCRIPTION=""
+WITH_KINDS=""
 ALLOW_SECRETS=0
 POSITIONAL=()
+
+USAGE="usage: $0 <name> [vendor] [-d <description>] [--with <kinds>] [--allow-secrets]"
 
 # Parse options and positionals. Positionals are <name> and [vendor].
 while [[ $# -gt 0 ]]; do
@@ -33,13 +39,21 @@ while [[ $# -gt 0 ]]; do
       DESCRIPTION="$2"
       shift 2
       ;;
+    --with)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "ERROR: --with requires a comma-separated list (tool,routine,agent,artifact)" >&2
+        exit 1
+      fi
+      WITH_KINDS="$2"
+      shift 2
+      ;;
     --allow-secrets)
       ALLOW_SECRETS=1
       shift
       ;;
     -*)
       echo "ERROR: unknown option: $1" >&2
-      echo "usage: $0 <name> [vendor] [-d <description>] [--allow-secrets]" >&2
+      echo "$USAGE" >&2
       exit 1
       ;;
     *)
@@ -53,12 +67,12 @@ NAME="${POSITIONAL[0]:-}"
 VENDOR="${POSITIONAL[1]:-}"
 if [[ "${#POSITIONAL[@]}" -gt 2 ]]; then
   echo "ERROR: too many positional arguments" >&2
-  echo "usage: $0 <name> [vendor] [-d <description>] [--allow-secrets]" >&2
+  echo "$USAGE" >&2
   exit 1
 fi
 
 if [[ -z "$NAME" ]]; then
-  echo "usage: $0 <name> [vendor] [-d <description>] [--allow-secrets]" >&2
+  echo "$USAGE" >&2
   exit 1
 fi
 
@@ -110,6 +124,28 @@ find "$DEST" -type f -print0 | while IFS= read -r -d '' f; do
     -e "s/__DESCRIPTION__/$DESCRIPTION/g" \
     "$f"
 done
+
+# --- Create subfolders for requested item kinds -----------------------------
+if [[ -n "$WITH_KINDS" ]]; then
+  IFS=',' read -ra REQUESTED_KINDS <<< "$WITH_KINDS"
+  for kind in "${REQUESTED_KINDS[@]}"; do
+    kind="$(echo "$kind" | tr -d '[:space:]')"
+    [[ -z "$kind" ]] && continue
+    case "$kind" in
+      tool|routine|agent|artifact)
+        mkdir -p "$DEST/$kind"
+        touch "$DEST/$kind/.gitkeep"
+        ;;
+      skill|data)
+        : # already present in the template
+        ;;
+      *)
+        echo "ERROR: unknown item kind for --with: $kind (expected: tool, routine, agent, artifact, skill, data)" >&2
+        exit 1
+        ;;
+    esac
+  done
+fi
 
 # --- Secrets gate ----------------------------------------------------------
 echo "Scanning $DEST for secrets..."

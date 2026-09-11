@@ -4,7 +4,7 @@ Open work items for opf-core. The OPF v1 spec is frozen in `spec/`; this list tr
 
 ## Spec and docs
 
-- [ ] Update schema `$id` (`schema/v1/manifest.schema.json`) if/when the repo transfers to the omnideck-dev org (it currently points at `opf-core/opf-core`, a placeholder org)
+- [ ] Repo is currently under the personal `rlnorthcutt` GitHub account; move to the `omnideck-dev` org once the spec/tooling is stable, and update all references in the same pass: schema `$id` (`schema/v1/manifest.schema.json`, currently the placeholder `opf-core/opf-core`) AND the CI template defaults (`ci/pack-scan.gitlab-ci.yml` `OPF_CORE_REPO`, `.github/workflows/scan.yml` `opf-core-repo` input), which currently default to `rlnorthcutt/opf-core`
 - [ ] Mark `opf-plan-v2.md` and `pack-spec-v2.md` (older drafts in a separate artifacts folder) as superseded or delete them, so nobody implements from the wrong document
 - [ ] Add a rationale/design-decisions appendix if adopters ask for the why behind choices (TOML rejection, no permissions block, etc.)
 
@@ -12,13 +12,13 @@ Open work items for opf-core. The OPF v1 spec is frozen in `spec/`; this list tr
 
 - [ ] `validate-pack.sh`: add support for validating against the schema with `jsonschema` when python3+jsonschema are present (currently partial); add tests
 - [ ] `validate-pack.sh`: check `scan.exclude` patterns (warn when a pattern matches nothing, per spec)
-- [ ] `new-pack.sh`: interactive mode (prompt for name/vendor/description/item kinds) in addition to flags
-- [ ] Add a `scripts/install-pack.sh` or make the pack-install skill logic available as a callable script for harnesses without skill support
+- [ ] `new-pack.sh`: interactive mode (prompt for name/vendor/description/item kinds) in addition to flags (item kinds now have a flag, `--with tool,routine,...`; add the same as an interactive prompt when not passed)
+- [x] Add `scripts/install-pack.sh`: a callable script that mechanically enforces validate -> stage -> scan -> approve -> resolve config -> install -> lock -> atomic swap, for harnesses without skill support. Single pack only; does not resolve dependency closures (see `skills/pack-install` for that).
 - [ ] Consider a single-binary CLI (go or python) once bash checks outgrow bash (per reference doc)
 
 ## Skills (skills/)
 
-- [ ] `pack-install`: implement the full 9-step procedure robustly (currently a SKILL.md description; test against a real pack)
+- [ ] `pack-install`: implement the full 9-step procedure robustly (currently a SKILL.md description; test against a real pack). The single-pack steps (validate/stage/scan/approve/install/lock/swap) now have a mechanical implementation in `scripts/install-pack.sh`; what's left here is mainly step 1, dependency-closure resolution, which the script deliberately does not do.
 - [ ] `create-pack`: wire the gitleaks secrets check with a grep fallback; test the refuse-on-secret path
 - [ ] Consider a `pack-update` skill if rolling-release workflows need an explicit update helper (spec currently: same-version reinstall via pack-install)
 

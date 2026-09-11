@@ -14,6 +14,7 @@ OPF is a standard for portable packs of skills, tools, routines, and data that w
 - `skills/create-pack/` - the skill for scaffolding a new pack from the template.
 - `scripts/validate-pack.sh` - validate a pack directory against the spec.
 - `scripts/new-pack.sh` - scaffold a new pack from the template.
+- `scripts/install-pack.sh` - deterministically install/update a single pack (validate, stage, scan, approve, install, lock, atomic swap); the hard-enforcement counterpart to the pack-install skill for harnesses that can run scripts but not skills.
 - `templates/pack-z-template/` - the starter template for a new pack.
 - `ci/` - GitLab CI include for scanning a pack.
 - `.github/workflows/` - reusable GitHub Actions workflow for scanning a pack.
@@ -32,7 +33,7 @@ Create a pack:
 scripts/new-pack.sh
 ```
 
-Install a pack: use the pack-install skill.
+Install a pack: use the pack-install skill, or for a single pack without dependency resolution, call `scripts/install-pack.sh <source-dir> <install-dir>` directly.
 
 ## Status
 

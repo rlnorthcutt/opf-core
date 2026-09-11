@@ -1,5 +1,13 @@
 name: opf-pack-scan
 
+# This job installs semgrep and gitleaks itself rather than skipping them
+# when absent: this reusable workflow is meant to be the canonical,
+# single-sourced security gate every pack inherits (host-layout doc,
+# "opf-core scan profile"), so it should not silently run structural
+# validation only. shellcheck ships preinstalled on GitHub-hosted
+# ubuntu-latest runners. The gitleaks version below should be bumped
+# periodically.
+
 on:
   workflow_call:
     inputs:
@@ -23,32 +31,20 @@ jobs:
           path: opf-core
 
       - name: Validate pack
-        run: |
-          bash opf-core/scripts/validate-pack.sh .
+        run: bash opf-core/scripts/validate-pack.sh .
 
-      - name: Shellcheck (if installed)
-        continue-on-error: false
+      - name: Install scanners
         run: |
-          if command -v shellcheck >/dev/null 2>&1; then
-            shellcheck scripts/*.sh
-          else
-            echo "shellcheck not installed; skipping."
-          fi
+          pip install --disable-pip-version-check --quiet semgrep
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz" | sudo tar -xz -C /usr/local/bin gitleaks
 
-      - name: Semgrep (if installed)
-        continue-on-error: false
+      - name: Shellcheck
         run: |
-          if command -v semgrep >/dev/null 2>&1; then
-            semgrep scan --config auto .
-          else
-            echo "semgrep not installed; skipping."
-          fi
+          sh_files="$(find . -maxdepth 2 -name '*.sh' -not -path './opf-core/*')"
+          if [ -n "$sh_files" ]; then echo "$sh_files" | xargs shellcheck; else echo "no shell scripts found; skipping shellcheck"; fi
 
-      - name: Gitleaks (if installed)
-        continue-on-error: false
-        run: |
-          if command -v gitleaks >/dev/null 2>&1; then
-            gitleaks detect --source . --no-banner
-          else
-            echo "gitleaks not installed; skipping."
-          fi
+      - name: Semgrep
+        run: semgrep scan --config auto .
+
+      - name: Gitleaks
+        run: gitleaks detect --source . --no-banner

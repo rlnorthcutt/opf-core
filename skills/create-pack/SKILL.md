@@ -21,18 +21,17 @@ skill instructs the agent to run `new-pack.sh` and to handle a refusal.
      routines, artifacts).
 
 2. **Run the scaffolder.** Run `scripts/new-pack.sh <name> [vendor] -d
-   "<description>"`. The script copies the template, substitutes placeholder
-   tokens in all template text files, and runs the secrets gate.
+   "<description>" [--with <kinds>]`, where `<kinds>` is a comma-separated
+   list drawn from the item kinds the user selected in step 1 (`tool`,
+   `routine`, `agent`, `artifact` - omit `skill` and `data`, which the
+   template already provides). The script copies the template, substitutes
+   placeholder tokens, creates a `.gitkeep`-tracked subfolder for each
+   requested kind, and runs the secrets gate.
 
-3. **Create subfolders for each selected item kind.** For each item kind the
-   user selected, create the corresponding subfolder in the new pack with a
-   `.gitkeep` placeholder so the folder is tracked:
-   - `tool/` for tools
-   - `routine/` for routines
-   - `agent/` for agents
-   - `artifact/` for artifacts
-   - `data/` already exists in the template; add `data/.gitkeep` if needed.
-   - `skill/` already exists in the template with an example skill.
+3. **Verify the requested subfolders exist.** Confirm the scaffolder created
+   a subfolder for each item kind the user selected in step 1. If `--with`
+   was omitted or a kind was missed, create the subfolder by hand with a
+   `.gitkeep` placeholder so git tracks the empty folder.
 
 4. **Fill the manifest.** Edit `manifest.json` to set `name`, `version`
    (`0.1.0`), `pack_format` (`1`), `description`, and `vendor`. The
