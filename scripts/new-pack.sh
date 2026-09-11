@@ -22,6 +22,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/secret-patterns.sh
 source "$SCRIPT_DIR/secret-patterns.sh"
+# shellcheck source=scripts/pack-name-pattern.sh
+source "$SCRIPT_DIR/pack-name-pattern.sh"
 
 NAME=""
 VENDOR=""
@@ -85,8 +87,8 @@ if [[ "$NAME" == "." || "$NAME" == ".." ]]; then
   exit 1
 fi
 
-if ! [[ "$NAME" =~ ^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$ ]]; then
-  echo "ERROR: name must match ^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$" >&2
+if ! [[ "$NAME" =~ $OPF_NAME_PATTERN ]]; then
+  echo "ERROR: name must match $OPF_NAME_PATTERN" >&2
   exit 1
 fi
 
@@ -137,15 +139,30 @@ cp -R "$TEMPLATE" "$DEST"
 
 # Replace placeholder tokens in ALL template text files.
 # __PACK_NAME__, __VENDOR__, __DESCRIPTION__.
+# Escaped for use as sed replacement text: a "/" would otherwise break the
+# s/.../.../ delimiter (aborting the substitution), and a bare "&" would be
+# interpreted by sed as "insert the matched text", silently corrupting the
+# output. NAME is already constrained to a safe charset by validation above;
+# VENDOR and DESCRIPTION are free text and need this regardless.
+sed_escape_replacement() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//&/\\&}"
+  s="${s//\//\\/}"
+  printf '%s' "$s"
+}
+ESC_NAME="$(sed_escape_replacement "$NAME")"
+ESC_VENDOR="$(sed_escape_replacement "$VENDOR")"
+ESC_DESCRIPTION="$(sed_escape_replacement "$DESCRIPTION")"
 find "$DEST" -type f -print0 | while IFS= read -r -d '' f; do
   case "$f" in
     *.json|*.md|*/OWNERS|*/.gitignore) ;;
     *) continue ;;
   esac
   sed -i \
-    -e "s/__PACK_NAME__/$NAME/g" \
-    -e "s/__VENDOR__/$VENDOR/g" \
-    -e "s/__DESCRIPTION__/$DESCRIPTION/g" \
+    -e "s/__PACK_NAME__/$ESC_NAME/g" \
+    -e "s/__VENDOR__/$ESC_VENDOR/g" \
+    -e "s/__DESCRIPTION__/$ESC_DESCRIPTION/g" \
     "$f"
 done
 
@@ -173,15 +190,12 @@ if command -v gitleaks >/dev/null 2>&1; then
     findings=1
   fi
 else
-  # grep fallback. Exclude .git, data/, and binary files (grep -I).
-  while IFS= read -r -d '' f; do
-    case "$f" in
-      */data/*|*/data|*/.git/*|*/.git) continue ;;
-    esac
-    if grep -InE "$OPF_SECRET_GREP_PATTERN" "$f" 2>/dev/null; then
-      findings=1
-    fi
-  done < <(find "$DEST" -type f -print0)
+  # grep fallback. Exclude .git, data/, and binary files (grep -I). A single
+  # recursive grep instead of one grep process per file.
+  grep -rIE -n --exclude-dir=.git --exclude-dir=data "$OPF_SECRET_GREP_PATTERN" "$DEST" 2>/dev/null || true
+  if grep -rIqE --exclude-dir=.git --exclude-dir=data "$OPF_SECRET_GREP_PATTERN" "$DEST" 2>/dev/null; then
+    findings=1
+  fi
 fi
 
 if [[ "$findings" -ne 0 ]]; then

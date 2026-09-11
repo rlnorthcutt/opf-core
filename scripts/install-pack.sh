@@ -168,10 +168,26 @@ confirm() {
   return 1
 }
 
-# --- Validate the source pack ------------------------------------------------
-echo "==> Validating source pack"
+# --- Stage --------------------------------------------------------------------
+# Staged (and .opf-env/.opf-lock stripped) before validation, not after: once
+# copied, nothing but this script's own next few lines touches STAGING_DIR, so
+# there's no window for a path-escaping symlink to be swapped into SOURCE_DIR
+# between a "validate the source" step and the copy that would otherwise
+# follow it unvalidated.
+STAGING_DIR="${INSTALL_DIR}.new"
+if [[ -e "$STAGING_DIR" ]]; then
+  echo "ERROR: staging directory already exists: $STAGING_DIR (a previous install may have failed mid-way; inspect and remove it manually)." >&2
+  exit 1
+fi
+echo "==> Staging pack into $STAGING_DIR"
+cp -R "$SOURCE_DIR" "$STAGING_DIR"
+rm -f "$STAGING_DIR/.opf-env" "$STAGING_DIR/.opf-lock"
+trap 'rm -rf "$STAGING_DIR"' EXIT
+
+# --- Validate the staged pack ------------------------------------------------
+echo "==> Validating staged pack"
 set +e
-"$VALIDATOR" "$SOURCE_DIR"
+"$VALIDATOR" "$STAGING_DIR"
 validator_rc=$?
 set -e
 if [[ $validator_rc -eq 1 ]]; then
@@ -179,9 +195,12 @@ if [[ $validator_rc -eq 1 ]]; then
   exit 1
 elif [[ $validator_rc -eq 2 ]]; then
   confirm "Validator produced warnings (above). Proceed anyway?" || { echo "Aborted." >&2; exit 1; }
+elif [[ $validator_rc -ne 0 ]]; then
+  echo "ERROR: validator exited with unexpected status $validator_rc; aborting install." >&2
+  exit 1
 fi
 
-MANIFEST="$SOURCE_DIR/manifest.json"
+MANIFEST="$STAGING_DIR/manifest.json"
 read_field() {
   python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print(v if v is not None else "")' "$MANIFEST" "$1"
 }
@@ -241,19 +260,8 @@ else
 fi
 # Not created here: creating it this early would put a filesystem side
 # effect (mkdir -p from an attacker-influenced path) before the pack has
-# been staged, scanned, or approved. It's created later, right before
-# install.sh runs (the first point that actually needs it to exist).
-
-# --- Stage --------------------------------------------------------------------
-STAGING_DIR="${INSTALL_DIR}.new"
-if [[ -e "$STAGING_DIR" ]]; then
-  echo "ERROR: staging directory already exists: $STAGING_DIR (a previous install may have failed mid-way; inspect and remove it manually)." >&2
-  exit 1
-fi
-echo "==> Staging pack into $STAGING_DIR"
-cp -R "$SOURCE_DIR" "$STAGING_DIR"
-rm -f "$STAGING_DIR/.opf-env" "$STAGING_DIR/.opf-lock"
-trap 'rm -rf "$STAGING_DIR"' EXIT
+# been scanned or approved. It's created later, right before install.sh
+# runs (the first point that actually needs it to exist).
 
 # --- Scan -----------------------------------------------------------------------
 echo "==> Scanning staged pack"
@@ -280,14 +288,14 @@ if command -v gitleaks >/dev/null 2>&1; then
 else
   echo "NOTE: gitleaks not installed; falling back to a pattern grep for likely secrets"
   echo "NOTE: (mirrors the fallback in scripts/new-pack.sh)."
-  while IFS= read -r -d '' f; do
-    case "$f" in
-      "$STAGING_DIR"/.opf-env|"$STAGING_DIR"/.opf-lock|*/.git/*) continue ;;
-    esac
-    if grep -InE "$OPF_SECRET_GREP_PATTERN" "$f" 2>/dev/null; then
-      scan_errors=$((scan_errors + 1))
-    fi
-  done < <(find "$STAGING_DIR" -type f -print0)
+  # A single recursive grep instead of one grep process per file. No
+  # .opf-env/.opf-lock exclusion needed here: both were already removed
+  # from STAGING_DIR's root above and aren't written again until after this
+  # scan step, so neither exists yet for this pass to see.
+  grep -rIE -n --exclude-dir=.git "$OPF_SECRET_GREP_PATTERN" "$STAGING_DIR" 2>/dev/null || true
+  if grep -rIqE --exclude-dir=.git "$OPF_SECRET_GREP_PATTERN" "$STAGING_DIR" 2>/dev/null; then
+    scan_errors=$((scan_errors + 1))
+  fi
 fi
 
 if [[ $scan_errors -gt 0 ]]; then
@@ -402,15 +410,15 @@ import hashlib, json, os, sys, datetime
 staging, name, version, install_dir, data_dir, source_type, source_url, source_commit, source_dir = sys.argv[1:10]
 
 checksums = {}
-skip_names = {".opf-env", ".opf-lock"}
+skip_rel_paths = {".opf-env", ".opf-lock"}
 for root, dirs, files in os.walk(staging):
     if ".git" in dirs:
         dirs.remove(".git")
     for fname in files:
-        if fname in skip_names:
-            continue
         full = os.path.join(root, fname)
         rel = os.path.relpath(full, staging)
+        if rel in skip_rel_paths:
+            continue
         h = hashlib.sha256()
         with open(full, "rb") as fh:
             for chunk in iter(lambda: fh.read(65536), b""):

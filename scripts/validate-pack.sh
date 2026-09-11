@@ -51,6 +51,8 @@ PACK_DIR="$(cd "$PACK_DIR" 2>/dev/null && pwd)" || {
 MANIFEST="$PACK_DIR/manifest.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCHEMA="$SCRIPT_DIR/../schema/v1/manifest.schema.json"
+# shellcheck source=scripts/pack-name-pattern.sh
+source "$SCRIPT_DIR/pack-name-pattern.sh"
 
 errors=0
 warnings=0
@@ -121,8 +123,8 @@ fi
 if [[ -n "$name" ]]; then
   if [[ "$name" == "." || "$name" == ".." ]]; then
     error "name must not be '.' or '..'"
-  elif ! [[ "$name" =~ ^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$ ]]; then
-    error "name does not match ^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$ (got: $name)"
+  elif ! [[ "$name" =~ $OPF_NAME_PATTERN ]]; then
+    error "name does not match $OPF_NAME_PATTERN (got: $name)"
   fi
 fi
 
@@ -173,7 +175,9 @@ done < <(find "$PACK_DIR" -print0)
 gitignore_has() {
   local dir="$1" target="$2" line
   [[ -f "$dir/.gitignore" ]] || return 1
-  while IFS= read -r line; do
+  # `|| [[ -n "$line" ]]` also processes a final line with no trailing
+  # newline, which `read` otherwise reports as EOF and the loop would skip.
+  while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%$'\r'}"
     line="${line#/}"
     line="${line%/}"
