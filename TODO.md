@@ -2,6 +2,14 @@
 
 Open work items for opf-core. The OPF v1 spec is frozen in `spec/`; this list tracks implementation and ecosystem work.
 
+## Before relying on this for real use
+
+- [ ] Dry-run the full lifecycle (create, install, update, downgrade) against one real skill/tool you use today, not just the synthetic packs `e2e-smoke-test.sh` creates, before pointing this at anything else.
+- [ ] Dependency resolution (`pack-install` skill step 1) has never been exercised against a real multi-pack dependency graph; don't rely on it for packs that depend on each other until it has been (see the `pack-install` item below).
+- [ ] There is no rollback history: a successful update deletes the previous version (`<pack>.old` is removed after the swap). "Rollback" today means keeping the old pack source yourself and reinstalling it with `--allow-downgrade`. Decide whether to keep versioned copies of anything you install before you need one.
+- [ ] The semgrep scan gate is advisory (warnings requiring acknowledgment), not a hard block, because the default `auto` ruleset isn't curated to OPF's dangerous-pattern categories (spec Section 7.2). Fine for packs you write yourself; curate a dedicated OPF ruleset with real error/warning severity mapping before installing packs you didn't write.
+- [ ] The harness-integration layer doesn't exist yet: nothing here wires `install-pack.sh`/the `pack-install` skill into a real running harness (who calls it, where resolved config values are stored, how a human sees and approves an `install.sh` diff in an actual UI). This repo is the standalone tooling layer; the integration is separate, unstarted work.
+
 ## Spec and docs
 
 - [ ] Repo is currently under the personal `rlnorthcutt` GitHub account; move to the `omnideck-dev` org once the spec/tooling is stable, and update all references in the same pass: schema `$id` (`schema/v1/manifest.schema.json`, currently the placeholder `opf-core/opf-core`) AND the CI template defaults (`ci/pack-scan.gitlab-ci.yml` `OPF_CORE_REPO`, `.github/workflows/scan.yml` `opf-core-repo` input), which currently default to `rlnorthcutt/opf-core`
