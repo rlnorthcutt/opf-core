@@ -24,6 +24,9 @@
 #   (l) scan.exclude patterns: warn if a pattern matches nothing in the pack
 #   (m) manifest.json must not contain unreplaced placeholder tokens
 #       (e.g. __PACK_NAME__) - placeholder tokens never pass validation
+#   (n) if present, data_dir must be a single path segment (no "/", not "."
+#       or ".."), checked independently of jsonschema availability, since a
+#       manifest-declared data_dir feeds a path join at install time
 #
 # Exit codes:
 #   0  pass
@@ -129,6 +132,16 @@ if [[ -n "$version" && ! "$version" =~ $SEMVER ]]; then
   error "version does not match the official semver regex (got: $version)"
 fi
 
+# --- (n) data_dir must be a single safe path segment ------------------------
+data_dir_field="$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get("data_dir"); print(v if isinstance(v,str) else "")' "$MANIFEST" 2>/dev/null || true)"
+if [[ -n "$data_dir_field" ]]; then
+  if [[ "$data_dir_field" == "." || "$data_dir_field" == ".." || "$data_dir_field" == */* ]]; then
+    error "data_dir must be a single path segment, not '.', '..', or contain '/' (got: $data_dir_field)"
+  elif ! [[ "$data_dir_field" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    error "data_dir does not match ^[A-Za-z0-9._-]+\$ (got: $data_dir_field)"
+  fi
+fi
+
 # --- (f) path safety: no path resolves outside the pack root ---------------
 # Resolve symlink targets fully (realpath, or readlink -f fallback) and verify
 # the resolved path stays under the pack root. Handles chains and "..".
@@ -154,9 +167,23 @@ while IFS= read -r -d '' entry; do
 done < <(find "$PACK_DIR" -print0)
 
 # --- (g) .opf-env and .opf-lock must be gitignored --------------------------
+# Accepts the exact-line form as well as the common /-anchored and trailing-/
+# variants (e.g. "/.opf-lock", ".opf-lock/"), not just a byte-for-byte match,
+# so a correctly gitignored file is never flagged as an error.
+gitignore_has() {
+  local dir="$1" target="$2" line
+  [[ -f "$dir/.gitignore" ]] || return 1
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    line="${line#/}"
+    line="${line%/}"
+    [[ "$line" == "$target" ]] && return 0
+  done < "$dir/.gitignore"
+  return 1
+}
 for state_file in .opf-env .opf-lock; do
   if [[ -e "$PACK_DIR/$state_file" ]]; then
-    if [[ -f "$PACK_DIR/.gitignore" ]] && grep -qxF "$state_file" "$PACK_DIR/.gitignore"; then
+    if gitignore_has "$PACK_DIR" "$state_file"; then
       :
     else
       error "$state_file exists but .gitignore does not contain $state_file"

@@ -18,10 +18,12 @@
 # skipping them when absent: this CI include is meant to be the canonical,
 # single-sourced security gate every pack inherits (host-layout doc, "opf-core
 # scan profile"), so it should not silently run structural validation only.
-# Runners that already provide these tools can drop the install steps.
+# Runners that already provide these tools can drop the install step.
 # The image is glibc-based (not alpine) because semgrep's published wheels
 # are manylinux (glibc) only and are unreliable on musl libc.
-# Pinned versions below should be bumped periodically.
+# The actual install logic lives in opf-core/scripts/ci-install-scanners.sh,
+# shared with .github/workflows/scan.yml, so the two templates cannot
+# silently drift to different tool versions or different install behavior.
 
 stages:
   - scan
@@ -36,15 +38,11 @@ pack-scan:
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends git curl ca-certificates >/dev/null
     - git clone --depth 1 "$OPF_CORE_REPO" opf-core
-    - pip install --disable-pip-version-check --quiet jsonschema semgrep
-    - curl -sSfL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" | tar -xJ -f - -C /usr/local/bin --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
-    - chmod +x /usr/local/bin/shellcheck
-    - curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -f - -C /usr/local/bin gitleaks
-    - chmod +x /usr/local/bin/gitleaks
+    - bash opf-core/scripts/ci-install-scanners.sh
   script:
     - bash opf-core/scripts/validate-pack.sh .
     - |
-      sh_files="$(find . -maxdepth 2 -name '*.sh' -not -path './opf-core/*')"
+      sh_files="$(find . -name '*.sh' -not -path './opf-core/*' -not -path './data/*' -not -path './.git/*')"
       if [ -n "$sh_files" ]; then echo "$sh_files" | xargs shellcheck; else echo "no shell scripts found; skipping shellcheck"; fi
     - semgrep scan --config auto .
     - gitleaks detect --source . --no-banner

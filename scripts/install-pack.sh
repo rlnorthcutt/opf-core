@@ -100,6 +100,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VALIDATOR="$SCRIPT_DIR/validate-pack.sh"
+# shellcheck source=scripts/secret-patterns.sh
+source "$SCRIPT_DIR/secret-patterns.sh"
 
 SOURCE_DIR="$(cd "$SOURCE_DIR" 2>/dev/null && pwd)" || {
   echo "ERROR: source directory does not exist or is not accessible: $SOURCE_DIR" >&2
@@ -220,6 +222,16 @@ if [[ -e "$INSTALL_DIR" ]]; then
 fi
 
 # --- Data dir -----------------------------------------------------------------
+# data_dir is an attacker-controlled manifest field (schema/validator restrict
+# it to a single safe segment, but jsonschema/validate-pack.sh may not be
+# available at call time) - reject anything that isn't a plain single-segment
+# name before it's used in a path join, rather than trusting the manifest.
+if [[ -n "$DATA_DIR_HINT" ]]; then
+  if [[ "$DATA_DIR_HINT" == "." || "$DATA_DIR_HINT" == ".." || "$DATA_DIR_HINT" == */* ]]; then
+    echo "ERROR: manifest data_dir must be a single path segment, not '.', '..', or contain '/' (got: $DATA_DIR_HINT)." >&2
+    exit 1
+  fi
+fi
 if [[ -n "$DATA_DIR_OVERRIDE" ]]; then
   PACK_DATA_DIR="$DATA_DIR_OVERRIDE"
 elif [[ -n "$DATA_DIR_HINT" ]]; then
@@ -227,7 +239,10 @@ elif [[ -n "$DATA_DIR_HINT" ]]; then
 else
   PACK_DATA_DIR="${INSTALL_DIR}-data"
 fi
-mkdir -p "$PACK_DATA_DIR"
+# Not created here: creating it this early would put a filesystem side
+# effect (mkdir -p from an attacker-influenced path) before the pack has
+# been staged, scanned, or approved. It's created later, right before
+# install.sh runs (the first point that actually needs it to exist).
 
 # --- Stage --------------------------------------------------------------------
 STAGING_DIR="${INSTALL_DIR}.new"
@@ -269,7 +284,7 @@ else
     case "$f" in
       "$STAGING_DIR"/.opf-env|"$STAGING_DIR"/.opf-lock|*/.git/*) continue ;;
     esac
-    if grep -InE 'AKIA[0-9A-Z]{16}|-----BEGIN (RSA|EC|OPENSSH|PGP) PRIVATE KEY|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|(password|passwd|secret|api[_-]?key|token)[[:space:]]*[=:][[:space:]]*["'"'"'][^"'"'"']{8,}' "$f" 2>/dev/null; then
+    if grep -InE "$OPF_SECRET_GREP_PATTERN" "$f" 2>/dev/null; then
       scan_errors=$((scan_errors + 1))
     fi
   done < <(find "$STAGING_DIR" -type f -print0)
@@ -324,6 +339,12 @@ if [[ ${#missing_required[@]} -gt 0 ]]; then
   echo "ERROR: provide each with --config NAME=value." >&2
   exit 1
 fi
+
+# --- Create the data dir ----------------------------------------------------------
+# Created here, not earlier: everything above this point (validate, scan,
+# install.sh approval, config resolution) has now passed, so this is the
+# first point that actually needs PACK_DATA_DIR to exist.
+mkdir -p "$PACK_DATA_DIR"
 
 # --- Write .opf-env --------------------------------------------------------------
 {
@@ -425,8 +446,17 @@ if [[ -e "$INSTALL_DIR" ]]; then
   OLD_DIR="${INSTALL_DIR}.old"
   rm -rf "$OLD_DIR"
   mv "$INSTALL_DIR" "$OLD_DIR"
-  mv "$STAGING_DIR" "$INSTALL_DIR"
-  rm -rf "$OLD_DIR"
+  if mv "$STAGING_DIR" "$INSTALL_DIR"; then
+    rm -rf "$OLD_DIR"
+  else
+    # Restore the previous install so "old pack remains intact on failure"
+    # (spec Section 8.1) actually holds. This covers the common case, a
+    # same-filesystem rename failing atomically (permissions, quota); a
+    # cross-filesystem partial copy failing mid-transfer is not handled.
+    echo "ERROR: failed to move staged pack into place; restoring previous install." >&2
+    mv "$OLD_DIR" "$INSTALL_DIR"
+    exit 1
+  fi
 else
   mv "$STAGING_DIR" "$INSTALL_DIR"
 fi

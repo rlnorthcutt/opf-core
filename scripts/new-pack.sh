@@ -19,6 +19,10 @@
 #
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/secret-patterns.sh
+source "$SCRIPT_DIR/secret-patterns.sh"
+
 NAME=""
 VENDOR=""
 DESCRIPTION=""
@@ -86,6 +90,27 @@ if ! [[ "$NAME" =~ ^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$ ]]; then
   exit 1
 fi
 
+# Validate --with up front, before any file is created: every other input
+# check in this script happens before cp -R, and this one should too, rather
+# than leaving a half-scaffolded pack on disk after a typo.
+REQUESTED_KINDS=()
+if [[ -n "$WITH_KINDS" ]]; then
+  IFS=',' read -ra RAW_KINDS <<< "$WITH_KINDS"
+  for kind in "${RAW_KINDS[@]}"; do
+    kind="$(echo "$kind" | tr -d '[:space:]')"
+    [[ -z "$kind" ]] && continue
+    case "$kind" in
+      tool|routine|agent|artifact|skill|data)
+        REQUESTED_KINDS+=("$kind")
+        ;;
+      *)
+        echo "ERROR: unknown item kind for --with: $kind (expected: tool, routine, agent, artifact, skill, data)" >&2
+        exit 1
+        ;;
+    esac
+  done
+fi
+
 # Prompt for description if not provided.
 if [[ -z "$DESCRIPTION" ]]; then
   if [[ -t 0 ]]; then
@@ -100,7 +125,6 @@ if [[ -z "$DESCRIPTION" ]]; then
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE="$SCRIPT_DIR/../templates/pack-z-template"
 DEST="./$NAME"
 
@@ -126,26 +150,18 @@ find "$DEST" -type f -print0 | while IFS= read -r -d '' f; do
 done
 
 # --- Create subfolders for requested item kinds -----------------------------
-if [[ -n "$WITH_KINDS" ]]; then
-  IFS=',' read -ra REQUESTED_KINDS <<< "$WITH_KINDS"
-  for kind in "${REQUESTED_KINDS[@]}"; do
-    kind="$(echo "$kind" | tr -d '[:space:]')"
-    [[ -z "$kind" ]] && continue
-    case "$kind" in
-      tool|routine|agent|artifact)
-        mkdir -p "$DEST/$kind"
-        touch "$DEST/$kind/.gitkeep"
-        ;;
-      skill|data)
-        : # already present in the template
-        ;;
-      *)
-        echo "ERROR: unknown item kind for --with: $kind (expected: tool, routine, agent, artifact, skill, data)" >&2
-        exit 1
-        ;;
-    esac
-  done
-fi
+# Kinds were already validated above, before scaffolding began.
+for kind in "${REQUESTED_KINDS[@]:-}"; do
+  case "$kind" in
+    tool|routine|agent|artifact)
+      mkdir -p "$DEST/$kind"
+      touch "$DEST/$kind/.gitkeep"
+      ;;
+    skill|data|"")
+      : # already present in the template, or an empty placeholder entry
+      ;;
+  esac
+done
 
 # --- Secrets gate ----------------------------------------------------------
 echo "Scanning $DEST for secrets..."
@@ -162,7 +178,7 @@ else
     case "$f" in
       */data/*|*/data|*/.git/*|*/.git) continue ;;
     esac
-    if grep -InE 'AKIA[0-9A-Z]{16}|-----BEGIN (RSA|EC|OPENSSH|PGP) PRIVATE KEY|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|(password|passwd|secret|api[_-]?key|token)[[:space:]]*[=:][[:space:]]*["'"'"'][^"'"'"']{8,}' "$f" 2>/dev/null; then
+    if grep -InE "$OPF_SECRET_GREP_PATTERN" "$f" 2>/dev/null; then
       findings=1
     fi
   done < <(find "$DEST" -type f -print0)

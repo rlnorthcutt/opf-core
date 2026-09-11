@@ -163,7 +163,9 @@
     },
     "data_dir": {
       "type": "string",
-      "description": "Preferred name for the runtime data directory. Optional hint."
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "not": { "pattern": "^\\.\\.?$" },
+      "description": "Preferred name for the runtime data directory: a single path segment, no '/' separators, and never '.' or '..'. Optional hint."
     },
     "metadata": {
       "type": "object",
