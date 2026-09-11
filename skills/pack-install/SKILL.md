@@ -12,6 +12,11 @@ zero harness-native pack features.
 
 Follow the procedure below in order. It is deterministic.
 
+For a single pack with no dependencies, `scripts/install-pack.sh` in this
+repo implements steps 2-10 below as a plain script with real exit codes,
+for a harness that can run scripts but not skills. It does not resolve
+dependency closures (step 1); this skill remains the path for that.
+
 ## Working directory assumption
 
 Skills may run with the `OPF_CORE` environment variable pointing at the

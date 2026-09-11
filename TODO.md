@@ -10,23 +10,26 @@ Open work items for opf-core. The OPF v1 spec is frozen in `spec/`; this list tr
 
 ## Tooling (scripts/)
 
-- [ ] `validate-pack.sh`: add support for validating against the schema with `jsonschema` when python3+jsonschema are present (currently partial); add tests
-- [ ] `validate-pack.sh`: check `scan.exclude` patterns (warn when a pattern matches nothing, per spec)
+- [x] `validate-pack.sh`: schema validation via `jsonschema` is fully implemented when the library is present (not partial); `scripts/e2e-smoke-test.sh` now covers validate-pack.sh, new-pack.sh, and install-pack.sh end to end
+- [x] `validate-pack.sh`: `scan.exclude` patterns are checked (warns when a pattern matches nothing, per spec)
 - [ ] `new-pack.sh`: interactive mode (prompt for name/vendor/description/item kinds) in addition to flags (item kinds now have a flag, `--with tool,routine,...`; add the same as an interactive prompt when not passed)
 - [x] Add `scripts/install-pack.sh`: a callable script that mechanically enforces validate -> stage -> scan -> approve -> resolve config -> install -> lock -> atomic swap, for harnesses without skill support. Single pack only; does not resolve dependency closures (see `skills/pack-install` for that).
+- [x] Add `scripts/e2e-smoke-test.sh`: end-to-end regression suite for new-pack.sh/validate-pack.sh/install-pack.sh, run in CI via `.github/workflows/self-test.yml` both with and without real scanners installed
+- [ ] Consider an `uninstall-pack.sh` (spec Section 11's minimum is "remove the folder", but a script could also run `uninstall.sh` with the right env and warn before touching `PACK_DATA_DIR`). Not yet covered by `e2e-smoke-test.sh`.
 - [ ] Consider a single-binary CLI (go or python) once bash checks outgrow bash (per reference doc)
 
 ## Skills (skills/)
 
 - [ ] `pack-install`: implement the full 9-step procedure robustly (currently a SKILL.md description; test against a real pack). The single-pack steps (validate/stage/scan/approve/install/lock/swap) now have a mechanical implementation in `scripts/install-pack.sh`; what's left here is mainly step 1, dependency-closure resolution, which the script deliberately does not do.
-- [ ] `create-pack`: wire the gitleaks secrets check with a grep fallback; test the refuse-on-secret path
+- [x] `create-pack`: the gitleaks secrets check with a grep fallback is wired (shared via `scripts/secret-patterns.sh`); the refuse-on-secret path is covered by `scripts/e2e-smoke-test.sh`
 - [ ] Consider a `pack-update` skill if rolling-release workflows need an explicit update helper (spec currently: same-version reinstall via pack-install)
 
 ## CI
 
+- [x] Added `.github/workflows/self-test.yml`: runs `scripts/e2e-smoke-test.sh` against opf-core's own scripts on every push/PR, once degraded and once with real semgrep/gitleaks/shellcheck installed via `scripts/ci-install-scanners.sh`. This exercises the scripts for real but NOT the `scan.yml` reusable-workflow plumbing itself (see next item).
 - [ ] Test `.github/workflows/scan.yml` as a reusable workflow from a real pack repo (`workflow_call` needs a caller)
 - [ ] Test `ci/pack-scan.gitlab-ci.yml` include in a GitLab project
-- [ ] Decide whether scan runs on PRs and/or pushes; document the recommended wiring in the reference doc
+- [ ] Decide whether scan runs on PRs and/or pushes; document the recommended wiring in the reference doc (`self-test.yml`'s `on: push` + `pull_request` is a reference example, but that's opf-core's own CI, not guidance for a consuming pack repo)
 
 ## Ecosystem
 
@@ -39,5 +42,5 @@ Open work items for opf-core. The OPF v1 spec is frozen in `spec/`; this list tr
 ## Housekeeping
 
 - [ ] Tag v1.0.0 of the schema/spec when frozen
-- [ ] Add CONTRIBUTING.md and a code of conduct if the repo goes public/community
+- [ ] Add CONTRIBUTING.md and a code of conduct - the repo is now public, so this condition is met
 - [ ] Consider GitHub Pages or a small docs site for the spec
