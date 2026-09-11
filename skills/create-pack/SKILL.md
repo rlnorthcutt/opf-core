@@ -1,13 +1,14 @@
 ---
 name: create-pack
-description: Scaffold a new OPF pack from the template, checking for secrets before creating.
+description: Scaffold a new OPF pack from the template, creating subfolders for selected item kinds and enforcing the secrets gate before creating.
 ---
 
 # create-pack
 
 Scaffold a new OPF pack from the template in `templates/pack-z-template/`.
-Before creating, check the new pack for secrets and refuse to create it if any
-are found.
+The scaffolder (`scripts/new-pack.sh`) enforces a secrets gate: it scans the
+new pack for likely secrets and refuses to create it if any are found. This
+skill instructs the agent to run `new-pack.sh` and to handle a refusal.
 
 ## Procedure
 
@@ -19,20 +20,29 @@ are found.
    - **item kinds**: which items the pack will contain (skills, tools, data,
      routines, artifacts).
 
-2. **Copy the template.** Copy `templates/pack-z-template/` to the new pack
-   directory.
+2. **Run the scaffolder.** Run `scripts/new-pack.sh <name> [vendor] -d
+   "<description>"`. The script copies the template, substitutes placeholder
+   tokens in all template text files, and runs the secrets gate.
 
-3. **Fill the manifest.** Edit `manifest.json` to set `name`, `version`
-   (`0.1.0`), `pack_format` (`1`), `description`, and `vendor`.
+3. **Create subfolders for each selected item kind.** For each item kind the
+   user selected, create the corresponding subfolder in the new pack with a
+   `.gitkeep` placeholder so the folder is tracked:
+   - `tool/` for tools
+   - `routine/` for routines
+   - `agent/` for agents
+   - `artifact/` for artifacts
+   - `data/` already exists in the template; add `data/.gitkeep` if needed.
+   - `skill/` already exists in the template with an example skill.
 
-4. **Check for secrets.** Run `gitleaks` if it is available. If it is not,
-   grep the new pack for common key, token, and password patterns (for
-   example `AKIA`, `-----BEGIN`, `sk-`, `ghp_`, `password =`, `api_key`,
-   `secret`). Check every file in the new pack.
+4. **Fill the manifest.** Edit `manifest.json` to set `name`, `version`
+   (`0.1.0`), `pack_format` (`1`), `description`, and `vendor`. The
+   scaffolder already substitutes `name`, `vendor`, and `description`.
 
-5. **Refuse to create if secrets are found.** If any secret is detected, do
-   not create the pack. Tell the user which file and pattern matched, and
-   stop.
+5. **Handle the secrets gate.** `new-pack.sh` runs the secrets scan itself
+   after scaffolding and before printing success. If it refuses (exit 1), do
+   NOT bypass it. Tell the user which file and pattern matched, and stop.
+   Only if the user explicitly accepts the risk may you re-run with
+   `--allow-secrets`; print the loud warning the script emits.
 
 6. **Point the user at the next steps.** Tell them to run
    `scripts/validate-pack.sh <pack-dir>` and to add the CI include
@@ -45,5 +55,7 @@ are found.
   must be gitignored.
 - The template's `.gitignore` already excludes `.opf-env`, `.opf-lock`, and
   `.env`.
+- The scaffolder refuses to create a pack that contains likely secrets unless
+  `--allow-secrets` is passed at the user's explicit risk.
 
-See `spec/opf-spec-v1.md` for the pack format and Section 9 for scanning.
+See `spec/opf-spec-v1.md` for the pack format and Section 7 for scanning.

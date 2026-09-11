@@ -1,5 +1,7 @@
 # __PACK_NAME__
 
+__DESCRIPTION__
+
 A pack in the Open Pack Format (OPF). A pack is a manifest plus embedded
 files, containing one or more items: skills, tools, data, routines, or
 artifacts. Packs install, update, and remove with zero native harness code.

@@ -9,21 +9,24 @@
 #       file: '/ci/pack-scan.gitlab-ci.yml'
 #
 # Or copy this file into your pack's .gitlab-ci.yml.
+#
+# The opf-core repo (which provides the validator) is cloned from
+# OPF_CORE_REPO (default https://github.com/rlnorthcutt/opf-core.git).
+# The validator step always runs; a missing validator is a hard failure.
 
 stages:
   - scan
 
 pack-scan:
   stage: scan
-  image: alpine:latest
+  image: alpine:3.20
+  variables:
+    OPF_CORE_REPO: "https://github.com/rlnorthcutt/opf-core.git"
+  before_script:
+    - apk add --no-cache bash python3 py3-jsonschema git
+    - git clone --depth 1 "$OPF_CORE_REPO" opf-core
   script:
-    - apk add --no-cache bash python3 py3-jsonschema >/dev/null 2>&1 || true
-    - |
-      if [ -f scripts/validate-pack.sh ]; then
-        bash scripts/validate-pack.sh .
-      else
-        echo "No validate-pack.sh found; skipping validation."
-      fi
+    - bash opf-core/scripts/validate-pack.sh .
     - |
       if command -v shellcheck >/dev/null 2>&1; then
         shellcheck scripts/*.sh

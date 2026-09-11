@@ -6,24 +6,31 @@
 #   scripts/validate-pack.sh <pack-dir>
 #
 # Checks (per spec/opf-spec-v1.md):
-#   (a) manifest.json exists and parses as JSON
+#   (a) manifest.json exists and parses as JSON (python3 is required)
 #   (b) required fields present: name, version, pack_format (must be 1), description
-#   (c) if python3 + jsonschema are available, validate against schema/v1/manifest.schema.json
+#   (c) if jsonschema is available, validate against schema/v1/manifest.schema.json
 #   (d) name matches ^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$ and is not "." or ".."
 #   (e) version matches the official semver regex
 #   (f) path safety: no file path resolves outside the pack root
-#       (checks for absolute symlinks and ".." components)
+#       (symlink targets are resolved fully with realpath/readlink -f)
 #   (g) if .opf-env exists, .gitignore must contain .opf-env
 #   (h) if .opf-lock exists, warn it is installer-written state and should not be committed
-#   (i) if a contents field is present, warn if declared items do not match actual folders
+#   (i) if a contents field is present, warn if declared items do not match
+#       actual folders (data/artifact use file-or-dir existence; the rest use isdir)
 #   (j) README.md missing = warning
+#   (k) lifecycle script contract for install.sh/uninstall.sh:
+#       executable bit (error if missing), shebang (error if missing),
+#       network-pattern scan (curl/wget/nc) = warning
+#   (l) scan.exclude patterns: warn if a pattern matches nothing in the pack
+#   (m) manifest.json must not contain unreplaced placeholder tokens
+#       (e.g. __PACK_NAME__) - placeholder tokens never pass validation
 #
 # Exit codes:
 #   0  pass
 #   1  error (a required check failed)
 #   2  warning-only (no errors, but warnings were emitted)
 #
-# Dependency-light: bash + python3 (optional) + git (optional).
+# Dependency: python3 is required. jsonschema and git are optional.
 #
 set -euo pipefail
 
@@ -49,6 +56,14 @@ note()  { echo "NOTE:    $*"; }
 warn()  { echo "WARNING: $*"; warnings=$((warnings + 1)); }
 error() { echo "ERROR:   $*"; errors=$((errors + 1)); }
 
+resolve_path() {
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$1"
+  else
+    readlink -f "$1"
+  fi
+}
+
 # --- (a) manifest.json exists and parses as JSON ---------------------------
 if [[ ! -f "$MANIFEST" ]]; then
   error "manifest.json not found in $PACK_DIR"
@@ -63,12 +78,9 @@ if command -v python3 >/dev/null 2>&1; then
     exit 1
   fi
 else
-  # Fallback: a minimal JSON sanity check using grep for balanced braces.
-  if ! grep -q '{' "$MANIFEST" || ! grep -q '}' "$MANIFEST"; then
-    error "manifest.json does not look like JSON (python3 not available for a full parse)"
-    echo "FAIL: $errors error(s), $warnings warning(s)"
-    exit 1
-  fi
+  error "python3 is required for validation"
+  echo "FAIL: $errors error(s), $warnings warning(s)"
+  exit 1
 fi
 
 # --- (b) required fields present -------------------------------------------
@@ -86,22 +98,20 @@ if [[ -n "$pack_format" && "$pack_format" != "1" ]]; then
   error "pack_format must be 1 (got: $pack_format)"
 fi
 
-# --- (c) validate against schema if python3 + jsonschema available ---------
-if command -v python3 >/dev/null 2>&1; then
-  if python3 -c 'import jsonschema' >/dev/null 2>&1; then
-    if ! python3 - "$MANIFEST" "$SCHEMA" <<'PY' 2>/dev/null
+# --- (c) validate against schema if jsonschema available -------------------
+if python3 -c 'import jsonschema' >/dev/null 2>&1; then
+  if ! python3 - "$MANIFEST" "$SCHEMA" <<'PY' 2>/dev/null
 import json, sys
 import jsonschema
 manifest = json.load(open(sys.argv[1]))
 schema = json.load(open(sys.argv[2]))
 jsonschema.validate(instance=manifest, schema=schema)
 PY
-    then
-      error "manifest.json failed schema validation against $SCHEMA"
-    fi
-  else
-    note "jsonschema not installed; skipping schema validation (python3 present)"
+  then
+    error "manifest.json failed schema validation against $SCHEMA"
   fi
+else
+  note "jsonschema not installed; skipping schema validation (python3 present)"
 fi
 
 # --- (d) name pattern ------------------------------------------------------
@@ -120,25 +130,19 @@ if [[ -n "$version" && ! "$version" =~ $SEMVER ]]; then
 fi
 
 # --- (f) path safety: no path resolves outside the pack root ---------------
-# Check for ".." components and absolute symlinks.
+# Resolve symlink targets fully (realpath, or readlink -f fallback) and verify
+# the resolved path stays under the pack root. Handles chains and "..".
+PACK_REAL="$(resolve_path "$PACK_DIR")"
 while IFS= read -r -d '' entry; do
   rel="${entry#"$PACK_DIR"/}"
-  case "$rel" in
-    *"/../"*|"../"*|*"/..")
-      error "path escapes pack root via '..': $rel"
-      ;;
+  resolved="$(resolve_path "$entry" 2>/dev/null)" || {
+    error "cannot resolve path: $rel"
+    continue
+  }
+  case "$resolved" in
+    "$PACK_REAL"|"$PACK_REAL"/*) : ;;
+    *) error "path escapes pack root: $rel -> $resolved" ;;
   esac
-  if [[ -L "$entry" ]]; then
-    target="$(readlink "$entry")"
-    case "$target" in
-      /*)
-        error "absolute symlink escapes pack root: $rel -> $target"
-        ;;
-      *"/../"*|"../"*|*"/..")
-        error "symlink escapes pack root via '..': $rel -> $target"
-        ;;
-    esac
-  fi
 done < <(find "$PACK_DIR" -print0)
 
 # --- (g) .opf-env must be gitignored ---------------------------------------
@@ -156,17 +160,17 @@ if [[ -e "$PACK_DIR/.opf-lock" ]]; then
 fi
 
 # --- (i) contents field vs actual folders ----------------------------------
-if command -v python3 >/dev/null 2>&1; then
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    warn "${line#WARNING: }"
-  done < <(python3 - "$MANIFEST" "$PACK_DIR" <<'PY' 2>/dev/null || true
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  warn "$line"
+done < <(python3 - "$MANIFEST" "$PACK_DIR" <<'PY' 2>/dev/null || true
 import json, os, sys
 manifest_path, pack_dir = sys.argv[1], sys.argv[2]
 manifest = json.load(open(manifest_path))
 contents = manifest.get("contents")
 if not isinstance(contents, dict):
     sys.exit(0)
+file_kinds = {"data", "artifact"}
 for kind, items in contents.items():
     if not isinstance(items, list):
         continue
@@ -174,15 +178,106 @@ for kind, items in contents.items():
         if not isinstance(item, str) or not item:
             continue
         folder = os.path.join(pack_dir, kind, item)
-        if not os.path.isdir(folder):
-            print(f"contents declares '{kind}/{item}' but no such folder exists in the pack")
+        if kind in file_kinds:
+            ok = os.path.exists(folder)
+        else:
+            ok = os.path.isdir(folder)
+        if not ok:
+            print(f"contents declares '{kind}/{item}' but no such item exists in the pack")
 PY
 )
-fi
 
 # --- (j) README.md missing = warning ---------------------------------------
 if [[ ! -f "$PACK_DIR/README.md" ]]; then
   warn "README.md is missing"
+fi
+
+# --- (k) lifecycle script contract -----------------------------------------
+for script in install.sh uninstall.sh; do
+  if [[ -e "$PACK_DIR/$script" ]]; then
+    if [[ ! -x "$PACK_DIR/$script" ]]; then
+      error "$script is not executable (missing +x)"
+    fi
+    first_line="$(head -n 1 "$PACK_DIR/$script" 2>/dev/null || true)"
+    case "$first_line" in
+      \#!*) : ;;
+      *) error "$script is missing a shebang (first line must start with #!)" ;;
+    esac
+    if grep -qE '\b(curl|wget|nc)\b' "$PACK_DIR/$script" 2>/dev/null; then
+      warn "$script uses network commands (curl/wget/nc); informational only"
+    fi
+  fi
+done
+
+# --- (l) scan.exclude patterns match nothing = warning ---------------------
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  warn "$line"
+done < <(python3 - "$MANIFEST" "$PACK_DIR" <<'PY' 2>/dev/null || true
+import json, os, re, sys
+manifest_path, pack_dir = sys.argv[1], sys.argv[2]
+manifest = json.load(open(manifest_path))
+scan = manifest.get("scan")
+if not isinstance(scan, dict):
+    sys.exit(0)
+excludes = scan.get("exclude")
+if not isinstance(excludes, list):
+    sys.exit(0)
+
+def glob_to_regex(pattern):
+    pattern = pattern.strip("/")
+    out = []
+    i = 0
+    n = len(pattern)
+    while i < n:
+        c = pattern[i]
+        if c == "*":
+            if i + 1 < n and pattern[i + 1] == "*":
+                out.append("(?:[^/]+/)*[^/]*")
+                i += 2
+                continue
+            out.append("[^/]*")
+            i += 1
+            continue
+        elif c == "?":
+            out.append("[^/]")
+            i += 1
+            continue
+        elif c == "[":
+            j = i + 1
+            while j < n and pattern[j] != "]":
+                j += 1
+            if j < n:
+                out.append(pattern[i:j + 1])
+                i = j + 1
+                continue
+            out.append(re.escape(c))
+            i += 1
+            continue
+        else:
+            out.append(re.escape(c))
+            i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+relpaths = []
+for root, dirs, files in os.walk(pack_dir):
+    for name in files:
+        relpaths.append(os.path.relpath(os.path.join(root, name), pack_dir))
+    for name in dirs:
+        relpaths.append(os.path.relpath(os.path.join(root, name), pack_dir))
+
+for pattern in excludes:
+    if not isinstance(pattern, str) or not pattern:
+        continue
+    rx = glob_to_regex(pattern)
+    if not any(rx.match(rp) for rp in relpaths):
+        print(f"scan.exclude pattern matches nothing in the pack: {pattern}")
+PY
+)
+
+# --- (m) placeholder tokens must never pass validation ---------------------
+if grep -qE '__[A-Z_]+__' "$MANIFEST" 2>/dev/null; then
+  error "manifest.json contains unreplaced placeholder tokens (e.g. __PACK_NAME__); placeholder tokens must never pass validation"
 fi
 
 # --- summary ---------------------------------------------------------------

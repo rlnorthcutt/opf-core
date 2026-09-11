@@ -2,21 +2,29 @@ name: opf-pack-scan
 
 on:
   workflow_call:
+    inputs:
+      opf-core-repo:
+        description: 'Repository to fetch opf-core (validator) from.'
+        required: false
+        type: string
+        default: 'rlnorthcutt/opf-core'
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout pack
         uses: actions/checkout@v4
+
+      - name: Checkout opf-core (validator)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.opf-core-repo }}
+          path: opf-core
 
       - name: Validate pack
         run: |
-          if [ -f scripts/validate-pack.sh ]; then
-            bash scripts/validate-pack.sh .
-          else
-            echo "No validate-pack.sh found; skipping validation."
-          fi
+          bash opf-core/scripts/validate-pack.sh .
 
       - name: Shellcheck (if installed)
         continue-on-error: false
