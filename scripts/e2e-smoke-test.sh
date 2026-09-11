@@ -112,11 +112,16 @@ echo
 echo "== new-pack.sh: secrets gate =="
 # The description is substituted into README.md/manifest.json at scaffold
 # time, so a secret-shaped description is enough to exercise the gate
-# without needing to seed a file after the fact.
+# without needing to seed a file after the fact. The fake key must be
+# exactly AKIA + 16 chars (the real AWS Access Key ID shape): gitleaks'
+# real rule anchors on that exact length, so a too-long look-alike is
+# correctly ignored by gitleaks but still (more loosely) matched by our
+# unanchored grep fallback - a real run against both caught exactly this
+# mismatch when the fake key was 4 characters too long.
 expect_exit "new-pack: refuses to create a pack whose description contains a likely secret" 1 \
-  "$NEW_PACK" secret-desc-test v -d "token: AKIAABCDEFGHIJKLMNOPQRST"
+  "$NEW_PACK" secret-desc-test v -d "token: AKIAABCDEFGHIJKLMNOP"
 expect_exit "new-pack: --allow-secrets overrides the refusal" 0 \
-  "$NEW_PACK" secret-desc-test-2 v -d "token: AKIAABCDEFGHIJKLMNOPQRST" --allow-secrets
+  "$NEW_PACK" secret-desc-test-2 v -d "token: AKIAABCDEFGHIJKLMNOP" --allow-secrets
 
 # =============================================================================
 echo
