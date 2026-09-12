@@ -12,7 +12,7 @@ Open work items for opf-core. The OPF v1 spec is frozen in `spec/`; this list tr
 
 ## Spec and docs
 
-- [ ] Repo is currently under the personal `rlnorthcutt` GitHub account; move to the `omnideck-dev` org once the spec/tooling is stable, and update all references in the same pass: schema `$id` (`schema/v1/manifest.schema.json`, currently the placeholder `opf-core/opf-core`) AND the CI template defaults (`ci/pack-scan.gitlab-ci.yml` `OPF_CORE_REPO`, `.github/workflows/scan.yml` `opf-core-repo` input), which currently default to `rlnorthcutt/opf-core`
+- [ ] Repo is currently under the personal `rlnorthcutt` GitHub account; move to the `omnideck-dev` org once the spec/tooling is stable, and update all references in the same pass: schema `$id` (`schema/v1/manifest.schema.json`, currently the placeholder `opf-core/opf-core`), the CI template defaults (`ci/pack-scan.gitlab-ci.yml` `OPF_CORE_REPO`, `.github/workflows/scan.yml` `opf-core-repo` input), AND the template's own CI callers (`templates/pack-z-template/.github/workflows/scan.yml`'s `uses:` and `templates/pack-z-template/.gitlab-ci.yml`'s `remote:`), which currently all default to `rlnorthcutt/opf-core`
 - [ ] Mark `opf-plan-v2.md` and `pack-spec-v2.md` (older drafts in a separate artifacts folder) as superseded or delete them, so nobody implements from the wrong document
 - [ ] Add a rationale/design-decisions appendix if adopters ask for the why behind choices (TOML rejection, no permissions block, etc.)
 
@@ -25,18 +25,19 @@ Open work items for opf-core. The OPF v1 spec is frozen in `spec/`; this list tr
 - [x] Add `scripts/e2e-smoke-test.sh`: end-to-end regression suite for new-pack.sh/validate-pack.sh/install-pack.sh, run in CI via `.github/workflows/self-test.yml` both with and without real scanners installed
 - [ ] Consider an `uninstall-pack.sh` (spec Section 11's minimum is "remove the folder", but a script could also run `uninstall.sh` with the right env and warn before touching `PACK_DATA_DIR`). Not yet covered by `e2e-smoke-test.sh`.
 - [ ] Consider a single-binary CLI (go or python) once bash checks outgrow bash (per reference doc)
+- [x] Add `scripts/bump-pack-version.sh`: deterministically bumps `manifest.json` version (major/minor/patch) and prepends a `CHANGELOG.md` entry; backs the `pack-release` skill. Covered by `scripts/e2e-smoke-test.sh`.
 
 ## Skills (skills/)
 
 - [ ] `pack-install`: implement the full 9-step procedure robustly (currently a SKILL.md description; test against a real pack). The single-pack steps (validate/stage/scan/approve/install/lock/swap) now have a mechanical implementation in `scripts/install-pack.sh`; what's left here is mainly step 1, dependency-closure resolution, which the script deliberately does not do.
 - [x] `create-pack`: the gitleaks secrets check with a grep fallback is wired (shared via `scripts/secret-patterns.sh`); the refuse-on-secret path is covered by `scripts/e2e-smoke-test.sh`
-- [ ] Consider a `pack-update` skill if rolling-release workflows need an explicit update helper (spec currently: same-version reinstall via pack-install)
+- [x] Added `pack-release`: the author-side skill for shipping a new version of an already-created pack (decides the semver bump from a plain-language description of the change, writes the changelog, validates, commits with confirmation) - written assuming a non-technical pack owner who doesn't know semver or git. Backed by `scripts/bump-pack-version.sh`. Named to avoid colliding with `pack-install`'s consumer-side "update" (installing a newer version into a harness).
 
 ## CI
 
 - [x] Added `.github/workflows/self-test.yml`: runs `scripts/e2e-smoke-test.sh` against opf-core's own scripts on every push/PR, once degraded and once with real semgrep/gitleaks/shellcheck installed via `scripts/ci-install-scanners.sh`. This exercises the scripts for real but NOT the `scan.yml` reusable-workflow plumbing itself (see next item).
-- [ ] Test `.github/workflows/scan.yml` as a reusable workflow from a real pack repo (`workflow_call` needs a caller)
-- [ ] Test `ci/pack-scan.gitlab-ci.yml` include in a GitLab project
+- [ ] Test `.github/workflows/scan.yml` as a reusable workflow from a real pack repo (`workflow_call` needs a caller). The template now ships that caller at `templates/pack-z-template/.github/workflows/scan.yml`; a pack scaffolded from the template and pushed to a real GitHub repo will exercise this.
+- [ ] Test `ci/pack-scan.gitlab-ci.yml` include in a GitLab project. The template now ships `templates/pack-z-template/.gitlab-ci.yml` (a remote include); a pack scaffolded from the template and pushed to a real GitLab project will exercise this.
 - [ ] Decide whether scan runs on PRs and/or pushes; document the recommended wiring in the reference doc (`self-test.yml`'s `on: push` + `pull_request` is a reference example, but that's opf-core's own CI, not guidance for a consuming pack repo)
 
 ## Ecosystem

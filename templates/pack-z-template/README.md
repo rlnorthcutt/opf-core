@@ -13,6 +13,8 @@ See `spec/opf-spec-v1.md` in the opf-core repository for the format.
 - `manifest.json` - the OPF v1 manifest.
 - `skill/` - skills in this pack.
 - `data/` - data shipped with this pack.
+- `.github/workflows/scan.yml`, `.gitlab-ci.yml` - CI scanning, already wired
+  to opf-core's validator and scan template. No setup needed.
 
 ## Validate
 

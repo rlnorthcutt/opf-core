@@ -44,16 +44,17 @@ skill instructs the agent to run `new-pack.sh` and to handle a refusal.
    `--allow-secrets`; print the loud warning the script emits.
 
 6. **Point the user at the next steps.** Tell them to run
-   `scripts/validate-pack.sh <pack-dir>` and to add the CI include
-   (`.github/workflows/scan.yml` or `ci/pack-scan.gitlab-ci.yml`) to their
-   repository.
+   `scripts/validate-pack.sh <pack-dir>`. CI scanning is already wired up by
+   the template - no separate step needed.
 
 ## Notes
 
 - Secrets never go in a pack. The scan flags likely secrets, and `.opf-env`
   must be gitignored.
 - The template's `.gitignore` already excludes `.opf-env`, `.opf-lock`, and
-  `.env`.
+  `.env`. It also ships `.github/workflows/scan.yml` and `.gitlab-ci.yml`,
+  both already wired to opf-core's scan template - a new pack is CI-green on
+  first push with no configuration.
 - The scaffolder refuses to create a pack that contains likely secrets unless
   `--allow-secrets` is passed at the user's explicit risk.
 

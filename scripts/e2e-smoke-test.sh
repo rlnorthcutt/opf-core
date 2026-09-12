@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # e2e-smoke-test.sh - end-to-end smoke test for new-pack.sh, validate-pack.sh,
-# and install-pack.sh. Exercises the golden path plus the specific
-# security/atomicity guarantees the spec and these scripts claim, entirely
-# inside a throwaway temp directory.
+# install-pack.sh, and bump-pack-version.sh. Exercises the golden path plus
+# the specific security/atomicity guarantees the spec and these scripts
+# claim, entirely inside a throwaway temp directory.
 #
 # Usage: scripts/e2e-smoke-test.sh
 #
@@ -24,6 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NEW_PACK="$SCRIPT_DIR/new-pack.sh"
 VALIDATE="$SCRIPT_DIR/validate-pack.sh"
 INSTALL_PACK="$SCRIPT_DIR/install-pack.sh"
+BUMP_VERSION="$SCRIPT_DIR/bump-pack-version.sh"
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -332,6 +333,59 @@ cp -R golden secret-in-pack
 echo "aws_secret_access_key = \"AKIAABCDEFGHIJKLMNOP\"" >> secret-in-pack/README.md
 expect_exit "install: refuses a pack containing a likely secret" 1 \
   "$INSTALL_PACK" secret-in-pack secret-in-pack-installed --yes
+
+# =============================================================================
+echo
+echo "== bump-pack-version.sh: golden path =="
+cp -R golden bump-test
+expect_exit "bump: patch bump succeeds" 0 \
+  "$BUMP_VERSION" bump-test patch --note "Fixed a bug."
+python3 -c "
+import json, sys
+v = json.load(open('bump-test/manifest.json'))['version']
+sys.exit(0 if v == '0.1.1' else 1)
+" && pass "bump: patch 0.1.0 -> 0.1.1" \
+  || fail "bump: patch 0.1.0 -> 0.1.1"
+grep -q '^## 0.1.1$' bump-test/CHANGELOG.md && grep -q -- '- Fixed a bug\.' bump-test/CHANGELOG.md \
+  && pass "bump: CHANGELOG.md gained a 0.1.1 section with the note" \
+  || fail "bump: CHANGELOG.md gained a 0.1.1 section with the note"
+head -n 1 bump-test/CHANGELOG.md | grep -q '^# Changelog$' \
+  && pass "bump: new entry inserted below the top-level heading, not above it" \
+  || fail "bump: new entry inserted below the top-level heading, not above it"
+
+expect_exit "bump: minor bump resets patch to 0" 0 \
+  "$BUMP_VERSION" bump-test minor --note "Added a capability."
+python3 -c "
+import json, sys
+v = json.load(open('bump-test/manifest.json'))['version']
+sys.exit(0 if v == '0.2.0' else 1)
+" && pass "bump: minor 0.1.1 -> 0.2.0" \
+  || fail "bump: minor 0.1.1 -> 0.2.0"
+
+expect_exit "bump: major bump resets minor.patch to 0.0" 0 \
+  "$BUMP_VERSION" bump-test major --note "Breaking change."
+python3 -c "
+import json, sys
+v = json.load(open('bump-test/manifest.json'))['version']
+sys.exit(0 if v == '1.0.0' else 1)
+" && pass "bump: major 0.2.0 -> 1.0.0" \
+  || fail "bump: major 0.2.0 -> 1.0.0"
+
+expect_exit "bump: validator still passes after bumps" 0 "$VALIDATE" bump-test
+
+expect_exit "bump: unknown bump kind is rejected" 1 \
+  "$BUMP_VERSION" bump-test bogus
+
+cp -R golden bump-no-changelog
+rm bump-no-changelog/CHANGELOG.md
+expect_exit "bump: missing CHANGELOG.md does not fail the bump" 0 \
+  "$BUMP_VERSION" bump-no-changelog patch --note "Fixed a bug."
+
+expect_exit "bump: no --note leaves CHANGELOG.md untouched" 0 \
+  "$BUMP_VERSION" golden patch
+[[ "$(head -n 3 golden/CHANGELOG.md)" == "$(printf '# Changelog\n\n## 0.1.0')" ]] \
+  && pass "bump: CHANGELOG.md unchanged when no --note given" \
+  || fail "bump: CHANGELOG.md unchanged when no --note given"
 
 # =============================================================================
 echo

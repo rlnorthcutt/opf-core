@@ -1,0 +1,13 @@
+name: opf-pack-scan
+
+# Calls opf-core's reusable scan workflow (validator + shellcheck + semgrep +
+# gitleaks). Do not duplicate that logic here - bump opf-core-repo/ref below
+# if you need a different opf-core checkout.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan:
+    uses: rlnorthcutt/opf-core/.github/workflows/scan.yml@main
