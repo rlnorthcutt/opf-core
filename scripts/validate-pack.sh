@@ -29,7 +29,13 @@
 #       manifest-declared data_dir feeds a path join at install time
 #   (o) contents.skills entries must match the skill-id grammar
 #       ^[a-z0-9]+(-[a-z0-9]+)*$ (spec Section 3), independent of jsonschema
-#   (p) a skill-id should equal its skills/<id>/SKILL.md name field = warning
+#   (p) a skill-id must equal its skills/<id>/SKILL.md name field
+#   (q) a skill item must be exactly skills/<name>/SKILL.md (depth 1); a
+#       nested skills/<name>/<sub>/SKILL.md is rejected regardless of
+#       whether contents declares it (spec Section 3)
+#   (r) a routine.json 'script' field must resolve inside its own
+#       routines/<name>/ subfolder: no '../' escape, no absolute path
+#       (spec Section 5.4)
 #
 # Exit codes:
 #   0  pass
@@ -214,7 +220,7 @@ manifest = json.load(open(manifest_path))
 contents = manifest.get("contents")
 if not isinstance(contents, dict):
     sys.exit(0)
-file_kinds = {"data", "artifact"}
+file_kinds = {"data", "artifacts"}
 for kind, items in contents.items():
     if not isinstance(items, list):
         continue
@@ -251,10 +257,15 @@ for skill_id in skills:
 PY
 )
 
-# --- (p) skill-id must equal the SKILL.md name field (warning) --------------
+# --- (p) skill-id must equal the SKILL.md name field ------------------------
+# Spec Section 3 (A7-strength): "validators MUST enforce ... name==folder-name".
+# An ERROR, not a warning: unlike the contents-vs-folder check (i), this is
+# not "does the declared item exist" (folders are the truth for that); it is
+# a structural conformance rule of the skill item itself, same footing as
+# the manifest name pattern check (d), which is also an ERROR.
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
-  warn "$line"
+  error "$line"
 done < <(python3 - "$MANIFEST" "$PACK_DIR" <<'PY' 2>/dev/null || true
 import json, os, re, sys
 manifest_path, pack_dir = sys.argv[1], sys.argv[2]
@@ -279,6 +290,65 @@ for skill_id in skills:
     name = nm.group(1).strip().strip('"\'')
     if name != skill_id:
         print(f"skill-id '{skill_id}' does not match SKILL.md name field '{name}'")
+PY
+)
+
+# --- (q) skill items must be exactly skills/<name>/SKILL.md (depth 1) -------
+# Spec Section 3 (A10): a nested skills/<name>/<sub>/SKILL.md is invalid.
+# Structural, so it runs against the actual skills/ tree regardless of what
+# contents declares (folders are the truth for existence, not for depth).
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  error "$line"
+done < <(python3 - "$PACK_DIR" <<'PY' 2>/dev/null || true
+import os, sys
+pack_dir = sys.argv[1]
+skills_dir = os.path.join(pack_dir, "skills")
+if not os.path.isdir(skills_dir):
+    sys.exit(0)
+for root, dirs, files in os.walk(skills_dir):
+    if "SKILL.md" not in files:
+        continue
+    rel = os.path.relpath(root, skills_dir)
+    if rel == os.curdir:
+        print("SKILL.md found directly in skills/; it must be inside skills/<name>/")
+    elif os.sep in rel:
+        print(f"skill nested deeper than depth 1: skills/{rel}/SKILL.md is invalid (must be skills/<name>/SKILL.md)")
+PY
+)
+
+# --- (r) routine.json 'script' must stay inside the routine's own subfolder -
+# Spec Section 5.4 (A8): containment for a descriptor field whose value is a
+# path into the item's own files. No '../' escape, no absolute path.
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  error "$line"
+done < <(python3 - "$PACK_DIR" <<'PY' 2>/dev/null || true
+import json, os, sys
+pack_dir = sys.argv[1]
+routines_dir = os.path.join(pack_dir, "routines")
+if not os.path.isdir(routines_dir):
+    sys.exit(0)
+for name in sorted(os.listdir(routines_dir)):
+    descriptor = os.path.join(routines_dir, name, "routine.json")
+    if not os.path.isfile(descriptor):
+        continue
+    try:
+        with open(descriptor) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        continue
+    script = data.get("script") if isinstance(data, dict) else None
+    if not isinstance(script, str) or not script:
+        continue
+    if os.path.isabs(script):
+        print(f"routines/{name}/routine.json: 'script' must be a relative path, not absolute (got: {script})")
+        continue
+    routine_root = os.path.join(routines_dir, name)
+    resolved = os.path.normpath(os.path.join(routine_root, script))
+    routine_root_norm = os.path.normpath(routine_root)
+    if resolved != routine_root_norm and not resolved.startswith(routine_root_norm + os.sep):
+        print(f"routines/{name}/routine.json: 'script' escapes its own subfolder (got: {script})")
 PY
 )
 

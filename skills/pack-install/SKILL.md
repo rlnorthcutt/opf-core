@@ -68,8 +68,15 @@ for the opf-core checkout path.
    Error-class findings from the curated ruleset stop the install here.
    Warnings (from the registry ruleset, or from the curated ruleset's
    WARNING-severity rules) are surfaced for user acknowledgment before
-   continuing. Exclude the installer's own state files from the scan: pass
-   `--exclude .opf-env --exclude .opf-lock` to semgrep and use gitleaks path
+   continuing. If the manifest declares `scan.exclude` patterns, resolve
+   them with `scripts/resolve-scan-excludes.py <manifest> <staging>` and
+   pass each printed path as an additional `--exclude` to both semgrep
+   calls above - it already drops any path that is an executable file type
+   (spec Section 7.3, rule (a)), so its output is always safe to exclude.
+   `scan.exclude` applies to content scanning only; never skip gitleaks or
+   any structural check because of it. Exclude the installer's own state
+   files from the scan: pass `--exclude .opf-env --exclude .opf-lock` to
+   semgrep and use gitleaks path
    exclusions for `.opf-env` and `.opf-lock`.
 
 5. **Obtain explicit user approval for `install.sh`.** Show the full text of
