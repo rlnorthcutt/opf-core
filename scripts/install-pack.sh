@@ -268,12 +268,23 @@ echo "==> Scanning staged pack"
 scan_errors=0
 scan_warnings=0
 
+OPF_RULESET="$SCRIPT_DIR/../ci/semgrep-opf-rules.yml"
 if command -v semgrep >/dev/null 2>&1; then
+  if [[ -f "$OPF_RULESET" ]]; then
+    echo "--- semgrep (curated OPF ruleset) ---"
+    semgrep scan --config "$OPF_RULESET" --quiet --exclude .opf-env --exclude .opf-lock "$STAGING_DIR" || true
+    if ! semgrep scan --config "$OPF_RULESET" --severity ERROR --error --quiet --exclude .opf-env --exclude .opf-lock "$STAGING_DIR"; then
+      echo "ERROR: semgrep (curated OPF ruleset) reported an error-class finding (above); refusing to install." >&2
+      scan_errors=$((scan_errors + 1))
+    fi
+  else
+    echo "NOTE: curated OPF ruleset not found at $OPF_RULESET; skipping it."
+  fi
   if ! semgrep scan --config auto --error --quiet --exclude .opf-env --exclude .opf-lock "$STAGING_DIR"; then
-    echo "WARNING: semgrep reported findings (above). Default-ruleset findings are"
-    echo "WARNING: treated as warnings requiring acknowledgment here, not automatic"
-    echo "WARNING: hard blocks - curate a dedicated OPF ruleset for stricter,"
-    echo "WARNING: spec-aligned error/warning severity mapping."
+    echo "WARNING: semgrep (registry auto ruleset) reported findings (above). Treated as"
+    echo "WARNING: warnings requiring acknowledgment, since the auto ruleset is not"
+    echo "WARNING: curated to OPF's dangerous-pattern categories (the curated OPF"
+    echo "WARNING: ruleset above is the hard block for those)."
     scan_warnings=$((scan_warnings + 1))
   fi
 else

@@ -6,11 +6,11 @@
 #   scripts/new-pack.sh <name> [vendor] [-d <description>] [--with <kinds>] [--allow-secrets]
 #
 # Copies the template to ./<name>, replaces placeholder tokens in all template
-# text files (manifest.json, README.md, CHANGELOG.md, OWNERS, skill/example/SKILL.md),
+# text files (manifest.json, README.md, CHANGELOG.md, OWNERS, skills/example/SKILL.md),
 # creates a .gitkeep-tracked subfolder for each item kind named in --with
 # (comma-separated: tool, routine, agent, artifact - skill and data are
-# already present in the template), runs a secrets gate, and prints next
-# steps.
+# already present in the template; each maps to its plural on-disk directory,
+# e.g. tool -> tools/), runs a secrets gate, and prints next steps.
 #
 # Secrets gate: after scaffolding, the pack is scanned for likely secrets
 # (gitleaks if available, otherwise a grep fallback). If findings are present
@@ -167,17 +167,24 @@ find "$DEST" -type f -print0 | while IFS= read -r -d '' f; do
 done
 
 # --- Create subfolders for requested item kinds -----------------------------
-# Kinds were already validated above, before scaffolding began.
+# Kinds were already validated above, before scaffolding began. --with values
+# stay singular for CLI ergonomics; on-disk directories are plural (spec
+# Section 5), so each requested kind maps to its plural directory name here.
 for kind in "${REQUESTED_KINDS[@]:-}"; do
+  dir=""
   case "$kind" in
-    tool|routine|agent|artifact)
-      mkdir -p "$DEST/$kind"
-      touch "$DEST/$kind/.gitkeep"
-      ;;
+    tool)     dir="tools" ;;
+    routine)  dir="routines" ;;
+    agent)    dir="agents" ;;
+    artifact) dir="artifacts" ;;
     skill|data|"")
       : # already present in the template, or an empty placeholder entry
       ;;
   esac
+  if [[ -n "$dir" ]]; then
+    mkdir -p "$DEST/$dir"
+    touch "$DEST/$dir/.gitkeep"
+  fi
 done
 
 # --- Secrets gate ----------------------------------------------------------

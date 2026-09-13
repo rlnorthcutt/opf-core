@@ -60,27 +60,30 @@
     "contents": {
       "type": "object",
       "properties": {
-        "skill": {
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "description": "Skill identifiers, one per skills/<name>/ subfolder. Must match the agentskills.io skill-id grammar and the SKILL.md name field."
+        },
+        "tools": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Skill identifiers, one per skill/<name>/ subfolder."
+          "description": "Tool identifiers, one per tools/<name>/ subfolder."
         },
-        "tool": {
+        "routines": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Tool identifiers, one per tool/<name>/ subfolder."
+          "description": "Routine identifiers, one per routines/<name>/ subfolder."
         },
-        "routine": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Routine identifiers, one per routine/<name>/ subfolder."
-        },
-        "agent": {
+        "agents": {
           "type": "array",
           "items": { "type": "string" },
           "description": "Agent identifiers, one per agent item."
         },
-        "artifact": {
+        "artifacts": {
           "type": "array",
           "items": { "type": "string" },
           "description": "Artifact identifiers."
@@ -95,7 +98,7 @@
         "type": "array",
         "items": { "type": "string" }
       },
-      "description": "Declared item kinds and their identifiers, for example { \"skill\": [\"report-format\"], \"routine\": [\"pack-sync\"] }. The validator checks contents against the actual folders as a warning, not an error."
+      "description": "Declared item kinds and their identifiers, for example { \"skills\": [\"report-format\"], \"routines\": [\"pack-sync\"] }. Keys are plural, matching the directory names. The validator checks contents against the actual folders as a warning, not an error."
     },
     "dependencies": {
       "type": "array",
@@ -115,7 +118,8 @@
             "description": "The dependency pack's name."
           },
           "version": { "type": "string", "description": "Semver range for the dependency, in node-semver range syntax (https://github.com/npm/node-semver#ranges), e.g. '^1.2.3', '~1.2.3', '>=1.0.0 <2.0.0'. No leading 'v'." },
-          "url": { "type": "string", "description": "Source repository URL where the dependency pack can be fetched if not already installed." }
+          "url": { "type": "string", "description": "Source repository URL where the dependency pack can be fetched if not already installed. A relative path, file:// URL, or private-registry URL (SSH, CI-job-token-gated) is acceptable." },
+          "ref": { "type": "string", "description": "Optional. The git ref a rolling consumer tracks (spec Section 9.2), e.g. 'main'. Informational; does not affect range-based resolution." }
         },
         "required": ["vendor", "name", "version", "url"],
         "additionalProperties": true,

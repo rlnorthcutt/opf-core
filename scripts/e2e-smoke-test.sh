@@ -91,7 +91,7 @@ if [[ -d golden ]]; then
     || fail "new-pack: no unreplaced placeholder tokens"
 
   all_dirs_present=1
-  for d in tool routine agent artifact skill data; do
+  for d in tools routines agents artifacts skills data; do
     [[ -d "golden/$d" ]] || all_dirs_present=0
   done
   [[ "$all_dirs_present" -eq 1 ]] \

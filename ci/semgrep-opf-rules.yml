@@ -1,0 +1,98 @@
+# semgrep-opf-rules.yml
+#
+# Curated, registry-independent semgrep ruleset for spec Section 7.2's
+# dangerous-pattern categories. Unlike `semgrep scan --config auto`, this
+# ruleset needs no reachable semgrep registry: it works entirely offline,
+# which matters for CI runners on private/VPN-only infrastructure that
+# cannot reach semgrep.dev.
+#
+# Severity mapping (spec Section 7.1): a rule's `severity: ERROR` is a
+# confirmed dangerous pattern and is CI-blocking (`--severity ERROR --error`);
+# `severity: WARNING` is a suspicious pattern flagged for review, not a
+# block. Most rules use `languages: [generic]` (regex-based, cross-language)
+# because bash's AST support in semgrep is too immature for reliable
+# structural matching on shell one-liners; the two Python-specific rules use
+# real AST patterns where semgrep's Python support makes that worthwhile.
+#
+# Used by ci/pack-scan.gitlab-ci.yml, .github/workflows/scan.yml, and
+# scripts/install-pack.sh's scan step.
+rules:
+  - id: opf-credential-file-access
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Reads a credential/secret file (SSH keys, cloud credentials, keychains).
+      Spec Section 7.2: credential/secret file access is an error-class
+      finding. Reading .opf-env is expected and is not this pattern.
+    paths:
+      exclude:
+        - "*.opf-env"
+    pattern-regex: '(~|\$HOME|\%HOMEPATH\%|os\.path\.expanduser\([\x27"]~)[/\\]?\.(ssh|aws/credentials|config/gcloud|kube/config|docker/config\.json)\b'
+
+  - id: opf-pipe-to-shell
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Pipes a remote download directly into a shell interpreter. Spec
+      Section 7.2: dynamic import of remote content.
+    pattern-regex: '(curl|wget)\b[^|\n]*\|\s*(sudo\s+)?(bash|sh|zsh)\b'
+
+  - id: opf-base64-to-shell
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Decodes a base64 payload directly into a shell interpreter. Spec
+      Section 7.2: obfuscation / base64-heavy payloads.
+    pattern-regex: 'base64\s+(-d|--decode)\b[^|\n]*\|\s*(bash|sh|zsh)\b'
+
+  - id: opf-eval-of-substitution-bash
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      eval of a command substitution: executes constructed/decoded content.
+      Spec Section 7.2: obfuscation / eval of constructed strings.
+    pattern-regex: 'eval\s+["'']?\$\('
+
+  - id: opf-exec-of-decoded-env-python
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Executes a string built from base64-decoded or environment-constructed
+      content. Spec Section 7.2: obfuscation / eval of constructed strings.
+    patterns:
+      - pattern-either:
+          - pattern: exec(base64.b64decode(...))
+          - pattern: eval(base64.b64decode(...))
+          - pattern: exec(os.environ[...])
+          - pattern: eval(os.environ[...])
+          - pattern: exec(os.environ.get(...))
+          - pattern: eval(os.environ.get(...))
+
+  - id: opf-dynamic-shell-true-python
+    languages: [python]
+    severity: WARNING
+    message: >-
+      subprocess call with shell=True. Spec Section 7.2: subprocess/exec/
+      spawn of arbitrary commands.
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run(..., shell=True, ...)
+          - pattern: subprocess.Popen(..., shell=True, ...)
+          - pattern: subprocess.call(..., shell=True, ...)
+
+  - id: opf-system-path-write
+    languages: [generic]
+    severity: WARNING
+    message: >-
+      Writes outside the pack root into a system path (/etc, /usr, /bin,
+      /sbin). Lifecycle scripts should write only inside PACK_ROOT /
+      PACK_DATA_DIR (spec Section 8.3).
+    pattern-regex: '(^|\s)(cp|mv|install|tee|>>?)\s+\S*\s*(/etc|/usr|/bin|/sbin)/'
+
+  - id: opf-crontab-edit
+    languages: [generic]
+    severity: WARNING
+    message: >-
+      Edits the system crontab or /etc/cron.d directly. Routines should be
+      registered per spec Section 5.4, not by editing the system crontab.
+    pattern-regex: '(crontab\s+(-e|-l|\S+\.txt)\b|/etc/cron\.(d|daily|hourly)/)'

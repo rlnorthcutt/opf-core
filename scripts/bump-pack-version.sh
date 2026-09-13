@@ -134,14 +134,24 @@ if [[ ${#NOTES[@]} -gt 0 ]]; then
   if [[ ! -f "$CHANGELOG" ]]; then
     echo "NOTE: CHANGELOG.md not found in $PACK_DIR; skipping changelog entry."
   else
+    set +e
     python3 - "$CHANGELOG" "$NEW_VERSION" "${NOTES[@]}" <<'PY'
-import sys
+import re, sys
 
 changelog_path, new_version = sys.argv[1], sys.argv[2]
 notes = sys.argv[3:]
 
 with open(changelog_path) as fh:
     lines = fh.readlines()
+
+# Table-style changelogs (e.g. "| date | version - change | why |") use a
+# different insertion shape per org; guessing one would risk corrupting the
+# file. Only insert a "## <version>" heading when the file already uses
+# that convention, or has no changelog convention established yet.
+has_heading = any(re.match(r'^##\s', line) for line in lines)
+has_table = any(line.lstrip().startswith('|') for line in lines)
+if not has_heading and has_table:
+    sys.exit(3)
 
 entry = [f"## {new_version}\n", "\n"] + [f"- {note}\n" for note in notes] + ["\n"]
 
@@ -157,7 +167,16 @@ new_lines = lines[:insert_at] + entry + lines[insert_at:]
 with open(changelog_path, "w") as fh:
     fh.writelines(new_lines)
 PY
-    echo "==> Added CHANGELOG.md entry for $NEW_VERSION"
+    changelog_rc=$?
+    set -e
+    if [[ $changelog_rc -eq 3 ]]; then
+      echo "NOTE: CHANGELOG.md does not use '## <version>' headings and looks table-based; skipping automatic insertion. Add the $NEW_VERSION entry by hand."
+    elif [[ $changelog_rc -ne 0 ]]; then
+      echo "ERROR: failed to update CHANGELOG.md (exit $changelog_rc)" >&2
+      exit 1
+    else
+      echo "==> Added CHANGELOG.md entry for $NEW_VERSION"
+    fi
   fi
 else
   echo "NOTE: no --note given; CHANGELOG.md left unchanged (add an entry before shipping)."

@@ -61,11 +61,11 @@ Everything else in this spec is an optional profile. This section defines what "
 | **Locked / editable** | Per-item (and per-pack) flag: whether the agent or user can modify it in place, versus needing to clone it into their own owned space first. |
 | **Lifecycle script** | An optional executable (`install.sh`, and optionally `uninstall.sh`) run by the harness at a defined point. |
 
-Item kinds in scope: Artifact, Skill, Tool, Data, Routine (scripts run by cron), and Agent profile. **Skill is a special case**: the open Agent Skills format (`SKILL.md`, YAML frontmatter, optional `scripts/`, `references/`, `assets/`) is already adopted across other agent products with its own registry (skills.sh). Skill packaging defaults to wrapping or adopting that format rather than inventing a new one. Each skill lives in its own subfolder, `skill/<skill-id>/SKILL.md`, both in the native tree and inside packs.
+Item kinds in scope: Artifact, Skill, Tool, Data, Routine (scripts run by cron), and Agent profile. **Skill is a special case**: the open Agent Skills format (`SKILL.md`, YAML frontmatter, optional `scripts/`, `references/`, `assets/`) is already adopted across other agent products with its own registry (skills.sh). Skill packaging defaults to wrapping or adopting that format rather than inventing a new one. Each skill lives in its own subfolder, `skills/<skill-id>/SKILL.md`, both in the native tree and inside packs. The skill-id MUST match `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase alphanumerics and single hyphens, no leading, trailing, or consecutive hyphens) and MUST equal the SKILL.md `name` field, per the open Agent Skills format (agentskills.io). This is a distinct, stricter grammar than the manifest `name`/`vendor` charset (Section 4.1); see the cross-reference table in Section 5.4.
 
 **Items are not in a pack by default.** Creating a skill, tool, routine, or artifact produces a standalone item; packing is an explicit act (via `create-pack` or by hand). Standalone items live wherever the harness keeps user-created things; the spec does not prescribe the location. A named-folder convention is suggested in the reference doc.
 
-There is no distinct "Script" item kind. A script belongs in `tool/` (generic or random scripts/tools), in `routine/` (if invoked by a cron/scheduler), or inside the skill's own folder (if unique to that skill).
+There is no distinct "Script" item kind. A script belongs in `tools/` (generic or random scripts/tools), in `routines/` (if invoked by a cron/scheduler), or inside the skill's own folder (if unique to that skill).
 
 ---
 
@@ -94,8 +94,8 @@ The manifest serves two purposes: **discovery and UX** (what the pack is, what i
 | `license` | No | string | SPDX identifier or `proprietary`. |
 | `categories` | No | array of string | Browse/filter grouping. OPTIONAL and non-load-bearing: helpful for discovery and UI; nothing validates against it and packs work fully without it. |
 | `images` | No | array of string | First = card thumbnail; the rest populate the detail carousel. OPTIONAL and non-load-bearing, same as `categories`. |
-| `dependencies` | No | array of object | Each entry has four required fields: `vendor`, `name`, `version` (a semver range, in [node-semver range syntax](https://github.com/npm/node-semver#ranges), for example `^1.2.3`, `~1.2.3`, or `>=1.0.0 <2.0.0`), and `url` (the source repository URL where the dependency pack can be fetched if not already installed). A relative path or `file://` URL is acceptable for local or monorepo dependencies. Dependencies are other packs. Dependencies key on the declared `vendor/name`, so forks and mirrors do not change identity. |
-| `contents` | No | object | Declared item kinds and their identifiers, for example `"contents": { "skill": ["report-format"], "routine": ["pack-sync"] }`. OPTIONAL. The validator checks `contents` against the actual folders as a WARNING, not an error; folders are the truth. |
+| `dependencies` | No | array of object | Each entry has four required fields: `vendor`, `name`, `version` (a semver range, in [node-semver range syntax](https://github.com/npm/node-semver#ranges), for example `^1.2.3`, `~1.2.3`, or `>=1.0.0 <2.0.0`), and `url` (the source repository URL where the dependency pack can be fetched if not already installed). A relative path, `file://` URL, or a private-registry URL (SSH, or CI-job-token-gated) is acceptable for local, monorepo, or private-infrastructure dependencies. An optional `ref` field records the git ref a rolling consumer tracks (Section 9.2); it is informational and does not affect resolution. Dependencies are other packs. Dependencies key on the declared `vendor/name`, so forks and mirrors do not change identity. |
+| `contents` | No | object | Declared item kinds and their identifiers, for example `"contents": { "skills": ["report-format"], "routines": ["pack-sync"] }`. Keys are plural, matching the directory names (Section 5). OPTIONAL. The validator checks `contents` against the actual folders as a WARNING, not an error; folders are the truth. |
 | `data_dir` | No | string | Preferred name for the runtime data directory (Section 5.2). Optional hint. |
 | `config` | No | array of object | Required/optional configuration entries (Section 4.4). |
 | `metadata` | No | object | Free-form key/value object for org-specific annotations. Non-load-bearing; never validated beyond being an object if present. Example: `"metadata": { "reviewed-by": "security-team", "internal-id": "PKG-1042" }`. |
@@ -120,10 +120,10 @@ The manifest serves two purposes: **discovery and UX** (what the pack is, what i
     { "vendor": "myorg", "name": "pack-common", "version": "^1.0.0", "url": "https://github.com/myorg/pack-common" }
   ],
   "contents": {
-    "skill": ["report-format"],
-    "tool": [],
-    "routine": ["weekly-report"],
-    "agent": ["weekly-editor"]
+    "skills": ["report-format"],
+    "tools": [],
+    "routines": ["weekly-report"],
+    "agents": ["weekly-editor"]
   },
   "data_dir": "weekly-report-data",
   "config": [
@@ -158,7 +158,7 @@ When a pack is installed, its dependencies are installed FIRST, before the pack 
 - The `url` field is used to fetch a dependency that is not installed. If a dependency of the same `vendor/name` is installed but its version does not satisfy the range, the installer reports the conflict and stops. It does not auto-upgrade.
 - Cycles are detected and refused. A pack that transitively depends on itself is invalid.
 - Dependencies are scanned and installed through the same pack-install procedure (validation, scan, approval) as any pack. There is no separate "dependency install" path.
-- `.opf-lock` records the resolved dependency closure (the `vendor/name` and resolved version of each dependency) alongside the pack's own version.
+- `.opf-lock` records the resolved dependency closure (the `vendor/name` and resolved version of each dependency, plus the resolved commit for a rolling dependency that declares `ref`; Section 9.2) alongside the pack's own version.
 
 **Atomicity is PER-PACK, not per-closure.** Each pack in the dependency closure is installed atomically on its own. A failed dependency leaves earlier successful dependency installs in place; the target pack is not installed. The installer does not roll back dependencies that already succeeded.
 
@@ -174,31 +174,50 @@ A pack is a directory. The only required file is `manifest.json`. Everything els
 <pack-root>/
   manifest.json          # REQUIRED manifest (Section 4)
   README.md              # human-readable overview (entry point)
-  artifact/              # distributed content: user-facing outputs and templates
+  artifacts/             # distributed content: user-facing outputs and templates
   data/                  # pack-owned content, replaced on update, checksummed
-  skill/                 # SKILL.md folders, one subfolder per skill
-  tool/                  # tool subfolders, one per tool (tool.json descriptor)
-  routine/               # routine subfolders, one per routine (routine.json descriptor)
-  agent/                 # agent items (optional AGENT.md, see Section 10)
+  skills/                # SKILL.md folders, one subfolder per skill
+  tools/                 # tool subfolders, one per tool (tool.json descriptor)
+  routines/              # routine subfolders, one per routine (routine.json descriptor)
+  agents/                # agent items (optional AGENT.md, see Section 10)
   install.sh             # optional lifecycle script (Section 8)
   uninstall.sh           # optional lifecycle script (Section 11)
   .opf-lock              # harness-written installed-state file, not part of the pack
   .opf-env               # harness-written env file (gitignored), not part of the pack
 ```
 
+All entity directories are plural (`skills/`, `tools/`, `routines/`, `agents/`, `artifacts/`), matching the ecosystem convention (Claude Skills, `pi`'s auto-discovery) and matching `packs/` at the host-layout level (Section 13). `data/` is the one exception, since it already reads as a mass noun rather than a countable collection.
+
 A harness MAY present pack items in per-type native locations via symlinks; see the reference doc.
 
 **Descriptor = subfolder rule.** An item is a subfolder when it contains a known descriptor file: `SKILL.md` for skills, `tool.json` for tools, `routine.json` for routines, and `AGENT.md` (or a harness-defined agent format) for agents. Artifacts and data are plain files or folders with no descriptor. This gives uniform recognition for agnostic-repo import (Section 6): a folder containing a known descriptor file is an item.
 
-### 5.1 `artifact/`
+### 5.1 `artifacts/`
 
-Distributed content: user-facing outputs and templates the pack produces, such as a generated report template, a rendered document skeleton, a spreadsheet template, or a diagram source. Files here are treated as opaque by the harness; the pack's own scripts and docs define their meaning. `artifact/` is distributed content and is treated as read-only by the contract.
+Distributed content: user-facing outputs and templates the pack produces, such as a generated report template, a rendered document skeleton, a spreadsheet template, or a diagram source. Files here are treated as opaque by the harness; the pack's own scripts and docs define their meaning. `artifacts/` is distributed content and is treated as read-only by the contract.
 
 ### 5.2 `data/` and runtime data
 
 `data/` is pack-owned content: it is replaced on update and covered by checksums. Files are opaque to the harness; the harness does not parse them. Runtime/mutable state belongs in `PACK_DATA_DIR` outside the pack root.
 
+A pack whose `data/` IS its primary payload (for example a knowledge or content pack: a wiki, a curated dataset) is fully conformant as-is; nothing above requires such a pack to also use `PACK_DATA_DIR`. `PACK_DATA_DIR` is only needed when runtime mutation exists — when something writes new or changed state after install, not merely when `data/` is large or central to the pack's purpose.
+
 Runtime/mutable state lives OUTSIDE the pack root. `PACK_DATA_DIR` points to a harness/user-chosen location outside the pack directory. The harness or skill resolves it, defaulting to a sibling of the pack folder, for example `<pack>-data`. The pack MAY declare a preferred name in the manifest `data_dir` field (Section 4.2). A pack whose `data/` is intended as a seed may have `install.sh` copy or link it into `PACK_DATA_DIR`, providing the mutable mechanism itself. Consumers of an installed external pack treat the pack as immutable/read-only, and the pack owner updates data by pushing new versions. Because runtime data lives outside the pack root, update-by-replace never destroys runtime data, and checksums cover the whole pack root meaningfully.
+
+**Example layout.** A complete install looks like this: the pack root, a sibling runtime data directory, and the harness-written `.opf-lock` (Section 9.1) inside the pack root:
+
+```
+weekly-report/                  # pack root (installed)
+  manifest.json
+  .opf-lock                     # its data_dir field is the ABSOLUTE path below
+  skills/report-format/
+  routines/weekly-report/
+
+weekly-report-data/              # PACK_DATA_DIR: sibling of the pack root
+  report.db
+```
+
+See Section 9.1 for the full `.opf-lock` contents, including the `data_dir` field recorded as this absolute sibling path.
 
 ### 5.3 `README.md`
 
@@ -210,17 +229,27 @@ Every descriptor-bearing item kind needs a minimal, standalone, self-describing 
 
 | Item kind | Descriptor | Location |
 |---|---|---|
-| Skill | `SKILL.md` (open Agent Skills format) | `skill/<skill-id>/SKILL.md` |
-| Tool | manifest-style descriptor, `tool.json` | `tool/<tool-id>/tool.json` |
-| Routine | manifest-style descriptor, `routine.json` | `routine/<routine-id>/routine.json` |
-| Agent | `AGENT.md` (or harness-defined agent format) | `agent/<agent-id>/AGENT.md` |
-| Artifact / Data | no descriptor required; opaque files | `artifact/`, `data/` |
+| Skill | `SKILL.md` (open Agent Skills format) | `skills/<skill-id>/SKILL.md` |
+| Tool | manifest-style descriptor, `tool.json` | `tools/<tool-id>/tool.json` |
+| Routine | manifest-style descriptor, `routine.json` | `routines/<routine-id>/routine.json` |
+| Agent | `AGENT.md` (or harness-defined agent format) | `agents/<agent-id>/AGENT.md` |
+| Artifact / Data | no descriptor required; opaque files | `artifacts/`, `data/` |
 
-Tool and routine descriptors are manifest-style JSON files that declare the item's name, description, and any entry point or schedule. They are deliberately minimal so a repo can be recognized without a pack manifest. An agent item is a subfolder `agent/<agent-id>/` containing `AGENT.md` (or a harness-defined agent format), per the descriptor = subfolder rule; `AGENT.md` itself is an optional convention (Section 10) with no required structure, and the internal structure of an agent folder remains loose.
+Tool and routine descriptors are manifest-style JSON files that declare the item's name, description, and any entry point or schedule. They are deliberately minimal so a repo can be recognized without a pack manifest. An agent item is a subfolder `agents/<agent-id>/` containing `AGENT.md` (or a harness-defined agent format), per the descriptor = subfolder rule; `AGENT.md` itself is an optional convention (Section 10) with no required structure, and the internal structure of an agent folder remains loose.
 
-**Routine descriptor (`routine.json`):** a routine is a subfolder `routine/<name>/` containing `routine.json` (the descriptor), plus an optional `README.md` and optional script file(s) kept self-contained in the same subfolder. Four fields are defined now: `schedule` (a 5-field cron expression), `command` (the command to run), `enabled` (bool), and the optional `script` (a path to a script file relative to the routine folder, for routines that run a script kept self-contained in their subfolder). Everything else about routines is left loose.
+**Routine descriptor (`routine.json`):** a routine is a subfolder `routines/<name>/` containing `routine.json` (the descriptor), plus an optional `README.md` and optional script file(s) kept self-contained in the same subfolder. Four fields are defined now: `schedule` (a 5-field cron expression), `command` (the command to run), `enabled` (bool), and the optional `script` (a path to a script file relative to the routine folder, for routines that run a script kept self-contained in their subfolder). Everything else about routines is left loose.
 
-**Tool descriptor (`tool.json`) and MCP:** a tool item is a subfolder `tool/<name>/` containing `tool.json`, with optional scripts and MCP configuration alongside. A tool item MAY embed a standard MCP server configuration block (for example an `mcpServers`-style JSON object) inside `tool.json`, so standard MCP clients can consume it directly. `tool.json` adds harness-specific fields around that block. This is one short paragraph of guidance; the exact shape of harness-specific fields is the harness's choice.
+**Tool descriptor (`tool.json`) and MCP:** a tool item is a subfolder `tools/<name>/` containing `tool.json`, with optional scripts and MCP configuration alongside. A tool item MAY embed a standard MCP server configuration block (for example an `mcpServers`-style JSON object) inside `tool.json`, so standard MCP clients can consume it directly. `tool.json` adds harness-specific fields around that block. This is one short paragraph of guidance; the exact shape of harness-specific fields is the harness's choice.
+
+**Name grammar cross-reference.** The manifest `name`/`vendor` grammar (Section 4.1) and the skill-id grammar (Section 3) are intentionally different, and a validator MUST NOT apply one where the other is called for:
+
+| Identifier | Grammar | Where enforced |
+|---|---|---|
+| Manifest `name` / `vendor` | `^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$`, 1-64 chars | `manifest.schema.json`, `scripts/pack-name-pattern.sh` |
+| Skill-id (`skills/<skill-id>/`) | `^[a-z0-9]+(-[a-z0-9]+)*$`, must equal SKILL.md `name` | `manifest.schema.json` (`contents.skills` items), `scripts/validate-pack.sh` |
+| Tool-id / routine-id / agent-id | folder existence only; no character-set grammar defined | `scripts/validate-pack.sh` (contents-vs-folder check) |
+
+A pack `name` legally containing `.` or `_` (for example `pack_core.core`) cannot be mirrored as a skill-id: the two grammars are not interchangeable.
 
 ---
 
@@ -259,7 +288,7 @@ Findings are classified into three severity classes:
 | **warning** | Flagged for the user. A suspicious pattern that does not meet the error bar. | Install proceeds only with explicit user acknowledgment; the finding is recorded. |
 | **info** | Informational. Style issues, unused variables, non-blocking notes, network usage. | Recorded and shown in a report; never blocks. |
 
-The mapping of a specific finding to a severity is the harness's policy, but the three classes exist and `error` findings block by default. Severity decisions (what blocks versus what flags) belong to the harness's install-time policy; the scan itself is purely behavior-based, flagging what scripts DO (credential access found by static analysis), not what a manifest declares. A manifest declaration grants nothing and is not part of OPF.
+The mapping of a specific finding to a severity is the harness's policy, but the three classes exist and `error` findings block by default. Severity decisions (what blocks versus what flags) belong to the harness's install-time policy; the scan itself is purely behavior-based, flagging what scripts DO (credential access found by static analysis), not what a manifest declares. A manifest declaration grants nothing and is not part of OPF. The validator exit-code contract (a machine-readable 0/1/2 mapping onto pass/error/warning) is non-normative and lives in the companion doc (`opf-host-layout.md`, Section 2.4).
 
 ### 7.2 Cross-language dangerous patterns
 
@@ -282,7 +311,9 @@ The scan covers ALL files, including `data/`, with practical limits:
 
 An optional manifest field `scan.exclude` is an array of path patterns excluded from content scanning. Patterns support both glob-style matches (for example `data/wiki/articles/*`) and exact paths. Rules: (a) exclusions never apply to executable file types, so an executable file is always scanned regardless of exclusion; (b) excluded files are still checksummed; (c) the validator warns if an exclusion pattern matches nothing in the pack.
 
-This addresses the common cases, not all. An obviously-executable file type is always scanned regardless of extension. Scan time scales with pack size; these exclusions keep it bounded.
+**Executable file type**, for rule (a): a file is executable if it has a shebang line (first bytes `#!`), OR its extension is in a normative executable-extensions list (`.sh`, `.py`), OR'd together. This closes a specific evasion: a shebang'd script with no extension, or a misleading one, placed under an excluded path would otherwise skip content scanning entirely. A compiled binary is unaffected by this rule: it is already checksummed-but-not-content-scanned under the known-binary-type exclusion above, and pattern-based content scanning of a binary blob is not meaningful regardless of how it is invoked (directly, or via a wrapper shell script, which is itself scanned as usual).
+
+This addresses the common cases, not all. An obviously-executable file type is always scanned regardless of extension. Scan time scales with pack size; these exclusions keep it bounded. The content-scan size/type thresholds above are a scanning concern only, distinct from any VCS/LFS size policy an org applies to its own repositories; the two are unrelated knobs that happen to operate on similar file-size boundaries.
 
 ---
 
@@ -389,7 +420,7 @@ The harness SHOULD record installed state in a file at the pack root named `.opf
   "checksums": {
     "manifest.json": "sha256:...",
     "data/report.db": "sha256:...",
-    "tool/report.sh": "sha256:..."
+    "tools/report.sh": "sha256:..."
   }
 }
 ```
@@ -398,11 +429,26 @@ The harness SHOULD record installed state in a file at the pack root named `.opf
 
 The checksums cover pack content. Installer-written state files (`.opf-lock`, `.opf-env`) are EXCLUDED from checksums: they are written after the scan and change post-install. The lock file stays inside the pack root and is gitignored. Because runtime data lives outside the pack root (Section 5.2), the pack root should not change after install, so the checksums cover the whole pack root meaningfully. The size and type exclusions in Section 7.3 apply to content scanning only, not to checksums. Checksums detect modification of the INSTALLED copy between install and a later update (tampering or drift); they are NOT compared against the source repo on update, because content changing at a fixed version is normal under a rolling-release workflow. The harness MAY verify checksums on update to detect tampering between install and update.
 
+### 9.2 Rolling release profile
+
+Some organizations distribute packs by tracking a git ref (typically `main`) rather than tagging releases: `version` becomes informational, and git itself is the distribution channel. The same-version-reinstall behavior above already permits this; this subsection consolidates what that implies rather than introducing anything new:
+
+- **`version` is informational.** The manifest still MUST carry a valid semver `version` (Section 4.1), but under this profile it commonly does not change between updates; git main (or a declared `ref`) is the actual distribution channel.
+- **`.opf-lock` and checksum verification are OPTIONAL under this profile.** Both are already phrased as SHOULD/MAY above; a rolling adopter MAY treat git history itself as the integrity mechanism instead of maintaining `.opf-lock` or verifying checksums on update.
+- **Downgrade and same-version-reinstall collapse into one operation: "sync to ref."** There is no meaningful "downgrade" when the version doesn't change; refusing or allowing a sync is a git operation (checking out an older commit), not a version comparison.
+- **Dependency ranges remain structurally required and validated** (Section 4.5); resolution is still range-based. A dependency MAY additionally declare an optional `ref` field recording what a rolling consumer actually tracks, for example:
+
+  ```json
+  { "vendor": "myorg", "name": "pack-common", "version": "*", "url": "https://github.com/myorg/pack-common", "ref": "main" }
+  ```
+
+  `ref` is informational and MUST NOT override range-based resolution: it does not change how a version is chosen, only what a rolling consumer's `.opf-lock` records (the resolved commit) once resolution completes. A harness operating in this profile MAY resolve `ref` to a commit and record it in the lock's dependency entry, alongside or instead of `version`.
+
 ---
 
 ## 10. Agent items and the `AGENT.md` convention
 
-OPF defines one thing about agent items: a folder location, `agent/`, where agent items live. That is all that is normative. How a harness represents an agent inside that folder is the harness's choice.
+OPF defines one thing about agent items: a folder location, `agents/`, where agent items live. That is all that is normative. How a harness represents an agent inside that folder is the harness's choice.
 
 ### 10.1 `AGENT.md` is optional
 
@@ -415,18 +461,18 @@ A short example of a plain `AGENT.md` with no frontmatter:
 
 You are the weekly report editor. You receive a draft report and you:
 
-1. Check it against the report template in `artifact/report-template.md`.
+1. Check it against the report template in `artifacts/report-template.md`.
 2. Fix formatting and tone.
 3. Summarize changes for the author.
 ```
 
 ### 10.2 Location
 
-Agent items live under `agent/`. A pack MAY contain zero or more agent items. A common layout is one folder per agent, for example `agent/<name>/`, but OPF does not mandate the internal structure.
+Agent items live under `agents/`. A pack MAY contain zero or more agent items. A common layout is one folder per agent, for example `agents/<name>/`, but OPF does not mandate the internal structure.
 
 ### 10.3 Import and interpretation
 
-For agnostic-repo import (Section 6), an agent item is recognized by the presence of `agent/<agent-id>/AGENT.md` (or a harness-defined agent format). How the harness interprets the content is the harness's job. If a harness cannot interpret the content, it imports the files as opaque and lets the user map them.
+For agnostic-repo import (Section 6), an agent item is recognized by the presence of `agents/<agent-id>/AGENT.md` (or a harness-defined agent format). How the harness interprets the content is the harness's job. If a harness cannot interpret the content, it imports the files as opaque and lets the user map them.
 
 ---
 

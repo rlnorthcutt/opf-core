@@ -20,34 +20,34 @@ Layout organized by provenance tier:
 
 ```
 <native-root>/
-  artifact/
+  artifacts/
     okf-app.html                      # standalone owned item, fully editable
   data/
     my-data/
-  skill/
+  skills/
     quick-notes/
-  tool/
-  routine/
+  tools/
+  routines/
     pack-sync/
       routine.json
 
   packs/
     okf-kit/
       manifest.json
-      artifact/okf-app.html           # real files live here
+      artifacts/okf-app.html          # real files live here
       data/wiki/
-      skill/okf-skill/
+      skills/okf-skill/
 
   .packs-external/
     acme/
       onboarding-kit/
         manifest.json
-        artifact/ data/ skill/ tool/ routine/
+        artifacts/ data/ skills/ tools/ routines/
 ```
 
 ### 1.2 Folder conventions
 
-Items live in named folders at a root (system root, project/workspace root, whatever the harness uses), for example `skill/quick-notes/`, `tool/pdf-convert/`. This is a good-practice suggestion, not part of the spec. The spec does not prescribe where standalone items live; a harness defines its own locations.
+Items live in named folders at a root (system root, project/workspace root, whatever the harness uses), for example `skills/quick-notes/`, `tools/pdf-convert/`. This is a good-practice suggestion, not part of the spec. The spec does not prescribe where standalone items live; a harness defines its own locations.
 
 ### 1.3 Provenance tiers
 
@@ -66,7 +66,7 @@ Create Pack moves real files into `~/packs/<pack-name>/<type>/` and leaves a sym
 
 Back in the native tree, a symlink:
 
-`<native-root>/artifact/okf-app.html -> <native-root>/packs/okf-kit/artifact/okf-app.html`
+`<native-root>/artifacts/okf-app.html -> <native-root>/packs/okf-kit/artifacts/okf-app.html`
 
 This assumes a filesystem where symlinks are reliable; any surface without reliable symlinks owns an alternative.
 
@@ -94,6 +94,12 @@ If a harness previously stored runtime data inside the pack root, migrating to t
 
 OPF defines the pack format. Adopting organizations also need supporting infrastructure around packs: where the scan rules live, how a new pack is scaffolded, and where shared content is stored. This section defines a recommended three-repo topology for that infrastructure. It is a pattern, not a requirement: a single-harness user can keep everything in one repo and ignore the split. The three repos are opf-core, pack-common, and pack-z-template. Scope note: pack-common is per user or per organization, never global. There is no shared global content repo in this topology. opf-core is a public repo anyone can use or fork; adopters create their own pack-common and pack-* repos.
 
+**Variant topology: template folded into core.** A single-org, single-VCS deployment (for example a private GitLab group with one vendor namespace) can merge opf-core and pack-z-template into one repo while keeping pack-common separate: the template lives at `templates/` inside the same repo that hosts the CI include and the scan rules. Since a CI `include:`/`uses:` resolves at pipeline-creation time regardless of which repo's `templates/` a pack was scaffolded from, "scaffold already wired to CI" stays atomic even with core and template merged. This sits between the single-repo case above (everything merged) and the full three-repo split; pick whichever point on that spectrum matches how many teams and VCS boundaries actually exist.
+
+**Vendoring the spec.** An org on VPN-only or otherwise offline infrastructure, unable to rely on GitHub fetches at build or validate time, MAY vendor the spec and schema (`spec/`, `schema/`) into its own private core repo, with a short doc noting the sync procedure and preserving the Apache-2.0 attribution. This is a sanctioned adoption path, not a fork of the format: the org still tracks and re-syncs against upstream opf-core; it is not maintaining a divergent spec.
+
+**Harness-integration case study.** The harness-integration layer (who calls `install-pack.sh`/the `pack-install` skill, where resolved config values are stored, how a human approves an `install.sh` diff) is deliberately unspecified by OPF, since it is harness-specific. A harness with git-native skill auto-discovery and reset-on-update behavior can satisfy the "locked by default" guarantee (Section 1.3) even more strongly than checksum auditing: if the harness always resets installed packs to the tracked git ref, a consumer cannot drift from what was published, with zero OPF-specific harness code required.
+
 ### 2.1 opf-core
 
 The infrastructure repo. It is public and harness-agnostic so any adopter can use it directly or fork it. It holds the reusable pieces that every pack depends on. Contents:
@@ -117,7 +123,7 @@ The minimal skeleton repo used by `new-pack.sh`. Contents: a placeholder `manife
 
 ### 2.4 Validator
 
-The validator script (`scripts/validate-pack.sh` in opf-core) is the enforcement point for format consistency. It checks: `manifest.json` schema (required fields, semver, `pack_format`), directory layout (`artifact/`, `data/`, `skill/` and so on, presence and placement), zip-slip-safe paths, the lifecycle script contract (executable bit, no surprising network use), `README.md` presence (a warning, not an error), `contents` against the actual folders (a warning, not an error), and secrets: if an `.opf-env` file exists it must be listed in `.gitignore`, and the scan flags likely secrets (keys, tokens, passwords). Exit codes are 0 for pass, 1 for error (CI-blocking), and 2 for warning. The same validator runs locally and in CI, so a pack that passes locally passes CI. The pack-install skill invokes the validator as its first step. Implementation note: start as a bash script calling `jsonschema` plus the available language tools from the opf-core scan profile (Section 2.6), then promote to a small CLI (python or go, single binary) once the checks outgrow bash.
+The validator script (`scripts/validate-pack.sh` in opf-core) is the enforcement point for format consistency. It checks: `manifest.json` schema (required fields, semver, `pack_format`), directory layout (`artifacts/`, `data/`, `skills/` and so on, presence and placement), zip-slip-safe paths, the lifecycle script contract (executable bit, no surprising network use), `README.md` presence (a warning, not an error), `contents` against the actual folders (a warning, not an error), and secrets: if an `.opf-env` file exists it must be listed in `.gitignore`, and the scan flags likely secrets (keys, tokens, passwords). Exit codes are 0 for pass, 1 for error (CI-blocking), and 2 for warning. The same validator runs locally and in CI, so a pack that passes locally passes CI. The pack-install skill invokes the validator as its first step. Implementation note: start as a bash script calling `jsonschema` plus the available language tools from the opf-core scan profile (Section 2.6), then promote to a small CLI (python or go, single binary) once the checks outgrow bash.
 
 ### 2.5 Scan staging notes
 

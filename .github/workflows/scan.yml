@@ -9,6 +9,12 @@ name: opf-pack-scan
 # The actual install logic lives in opf-core/scripts/ci-install-scanners.sh,
 # shared with ci/pack-scan.gitlab-ci.yml, so the two templates cannot
 # silently drift to different tool versions or different install behavior.
+#
+# Semgrep runs twice: once against opf-core/ci/semgrep-opf-rules.yml (the
+# curated, offline, spec-Section-7.2-mapped ruleset - CI-blocking on its
+# ERROR-severity rules only), and once against the registry `auto` config
+# (best-effort; non-blocking, since a runner that can't reach semgrep.dev
+# must not fail the pipeline on that).
 
 on:
   workflow_call:
@@ -46,8 +52,13 @@ jobs:
           sh_files="$(find . -name '*.sh' -not -path './opf-core/*' -not -path './data/*' -not -path './.git/*')"
           if [ -n "$sh_files" ]; then echo "$sh_files" | xargs shellcheck; else echo "no shell scripts found; skipping shellcheck"; fi
 
-      - name: Semgrep
-        run: semgrep scan --config auto .
+      - name: Semgrep (curated OPF ruleset)
+        run: |
+          semgrep scan --config opf-core/ci/semgrep-opf-rules.yml --exclude .opf-env --exclude .opf-lock .
+          semgrep scan --config opf-core/ci/semgrep-opf-rules.yml --severity ERROR --error --quiet --exclude .opf-env --exclude .opf-lock .
+
+      - name: Semgrep (registry auto ruleset, best-effort)
+        run: semgrep scan --config auto . || true
 
       - name: Gitleaks
         run: gitleaks detect --source . --no-banner

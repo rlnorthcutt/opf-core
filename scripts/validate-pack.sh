@@ -27,6 +27,9 @@
 #   (n) if present, data_dir must be a single path segment (no "/", not "."
 #       or ".."), checked independently of jsonschema availability, since a
 #       manifest-declared data_dir feeds a path join at install time
+#   (o) contents.skills entries must match the skill-id grammar
+#       ^[a-z0-9]+(-[a-z0-9]+)*$ (spec Section 3), independent of jsonschema
+#   (p) a skill-id should equal its skills/<id>/SKILL.md name field = warning
 #
 # Exit codes:
 #   0  pass
@@ -225,6 +228,57 @@ for kind, items in contents.items():
             ok = os.path.isdir(folder)
         if not ok:
             print(f"contents declares '{kind}/{item}' but no such item exists in the pack")
+PY
+)
+
+# --- (o) skill-id grammar (contents.skills) ---------------------------------
+# Per spec Section 3: skill-id MUST match the agentskills.io grammar, a
+# stricter and distinct charset from the manifest name/vendor pattern above.
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  error "$line"
+done < <(python3 - "$MANIFEST" <<'PY' 2>/dev/null || true
+import json, re, sys
+manifest = json.load(open(sys.argv[1]))
+contents = manifest.get("contents")
+skills = contents.get("skills") if isinstance(contents, dict) else None
+if not isinstance(skills, list):
+    sys.exit(0)
+rx = re.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')
+for skill_id in skills:
+    if isinstance(skill_id, str) and skill_id and not rx.match(skill_id):
+        print(f"skill-id '{skill_id}' does not match ^[a-z0-9]+(-[a-z0-9]+)*\$ (contents.skills)")
+PY
+)
+
+# --- (p) skill-id must equal the SKILL.md name field (warning) --------------
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  warn "$line"
+done < <(python3 - "$MANIFEST" "$PACK_DIR" <<'PY' 2>/dev/null || true
+import json, os, re, sys
+manifest_path, pack_dir = sys.argv[1], sys.argv[2]
+manifest = json.load(open(manifest_path))
+contents = manifest.get("contents")
+skills = contents.get("skills") if isinstance(contents, dict) else None
+if not isinstance(skills, list):
+    sys.exit(0)
+for skill_id in skills:
+    if not isinstance(skill_id, str) or not skill_id:
+        continue
+    skill_md = os.path.join(pack_dir, "skills", skill_id, "SKILL.md")
+    if not os.path.isfile(skill_md):
+        continue
+    text = open(skill_md).read()
+    m = re.match(r'^---\r?\n(.*?)\r?\n---\r?\n', text, re.DOTALL)
+    if not m:
+        continue
+    nm = re.search(r'^name:\s*(.+?)\s*$', m.group(1), re.MULTILINE)
+    if not nm:
+        continue
+    name = nm.group(1).strip().strip('"\'')
+    if name != skill_id:
+        print(f"skill-id '{skill_id}' does not match SKILL.md name field '{name}'")
 PY
 )
 

@@ -58,13 +58,19 @@ for the opf-core checkout path.
    path.
 
 4. **Scan the staging copy.** Run the static scan on the staging directory:
-   - `semgrep scan --config auto --exclude .opf-env --exclude .opf-lock <staging>`
+   - `semgrep scan --config <opf-core>/ci/semgrep-opf-rules.yml --severity ERROR --error --exclude .opf-env --exclude .opf-lock <staging>`
+     (the curated OPF ruleset - error-class findings here stop the install)
+   - `semgrep scan --config auto --error --exclude .opf-env --exclude .opf-lock <staging>`
+     (the registry ruleset - not curated to OPF's categories, so findings are
+     surfaced as warnings requiring acknowledgment, not a hard block)
    - `gitleaks detect --source <staging> --no-git --redact` (if installed;
      skip gracefully with a note if absent).
-   Error-class findings stop the install here. Warnings are surfaced for user
-   acknowledgment before continuing. Exclude the installer's own state files
-   from the scan: pass `--exclude .opf-env --exclude .opf-lock` to semgrep and
-   use gitleaks path exclusions for `.opf-env` and `.opf-lock`.
+   Error-class findings from the curated ruleset stop the install here.
+   Warnings (from the registry ruleset, or from the curated ruleset's
+   WARNING-severity rules) are surfaced for user acknowledgment before
+   continuing. Exclude the installer's own state files from the scan: pass
+   `--exclude .opf-env --exclude .opf-lock` to semgrep and use gitleaks path
+   exclusions for `.opf-env` and `.opf-lock`.
 
 5. **Obtain explicit user approval for `install.sh`.** Show the full text of
    `install.sh` on a first install. On an update, show the diff against the
