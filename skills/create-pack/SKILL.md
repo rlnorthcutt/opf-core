@@ -10,6 +10,23 @@ The scaffolder (`scripts/new-pack.sh`) enforces a secrets gate: it scans the
 new pack for likely secrets and refuses to create it if any are found. This
 skill instructs the agent to run `new-pack.sh` and to handle a refusal.
 
+## Working directory assumption
+
+Skills may run with the `OPF_CORE` environment variable pointing at the
+opf-core checkout. If `OPF_CORE` is set, locate `new-pack.sh` and
+`validate-pack.sh` under `$OPF_CORE/scripts/`, and the template under
+`$OPF_CORE/templates/pack-z-template/`. Otherwise, locate them relative to
+this skill if it is bundled with opf-core (for example
+`<opf-core>/scripts/new-pack.sh`). If neither is available, ask the user for
+the opf-core checkout path.
+
+This matters because opf-core is typically installed once and reused across
+many packs: the checkout is rarely the current working directory when this
+skill runs. The new pack itself is created in the CURRENT working directory
+(`new-pack.sh` scaffolds `./<name>`, not a path relative to opf-core) - `cd`
+to wherever the user keeps their packs before running the scaffolder, using
+the opf-core paths above only to locate the tooling itself.
+
 ## Procedure
 
 1. **Gather pack details from the user.** Ask for:
@@ -19,8 +36,14 @@ skill instructs the agent to run `new-pack.sh` and to handle a refusal.
    - **description**: a one-line summary.
    - **item kinds**: which items the pack will contain (skills, tools, data,
      routines, artifacts).
+   - **owner(s)**: who maintains this pack (goes in `OWNERS`, one per line).
+     If the user is unsure whether this should be a new pack, an addition to
+     an existing one, or a dependency-only bundle pack, see
+     `<opf-core>/spec/opf-pack-boundaries.md` before scaffolding - splitting
+     later is more work than deciding well up front.
 
-2. **Run the scaffolder.** Run `scripts/new-pack.sh <name> [vendor] -d
+2. **Run the scaffolder.** From the directory where the new pack should be
+   created, run `bash <opf-core>/scripts/new-pack.sh <name> [vendor] -d
    "<description>" [--with <kinds>]`, where `<kinds>` is a comma-separated
    list drawn from the item kinds the user selected in step 1 (`tool`,
    `routine`, `agent`, `artifact` - omit `skill` and `data`, which the
@@ -33,9 +56,13 @@ skill instructs the agent to run `new-pack.sh` and to handle a refusal.
    was omitted or a kind was missed, create the subfolder by hand with a
    `.gitkeep` placeholder so git tracks the empty folder.
 
-4. **Fill the manifest.** Edit `manifest.json` to set `name`, `version`
-   (`0.1.0`), `pack_format` (`1`), `description`, and `vendor`. The
-   scaffolder already substitutes `name`, `vendor`, and `description`.
+4. **Fill the manifest and OWNERS.** Edit `manifest.json` to set `name`,
+   `version` (`0.1.0`), `pack_format` (`1`), `description`, and `vendor`.
+   The scaffolder already substitutes `name`, `vendor`, and `description`.
+   Replace the placeholder text in `OWNERS` with the owner(s) gathered in
+   step 1, one per line, keeping the list short (`opf-pack-boundaries.md`
+   Section 2) - a pack that needs many names on `OWNERS` to function is
+   usually a sign it should be split, not a sign to keep adding names.
 
 5. **Handle the secrets gate.** `new-pack.sh` runs the secrets scan itself
    after scaffolding and before printing success. If it refuses (exit 1), do
@@ -44,8 +71,8 @@ skill instructs the agent to run `new-pack.sh` and to handle a refusal.
    `--allow-secrets`; print the loud warning the script emits.
 
 6. **Point the user at the next steps.** Tell them to run
-   `scripts/validate-pack.sh <pack-dir>`. CI scanning is already wired up by
-   the template - no separate step needed.
+   `bash <opf-core>/scripts/validate-pack.sh <pack-dir>`. CI scanning is
+   already wired up by the template - no separate step needed.
 
 ## Notes
 
@@ -58,4 +85,4 @@ skill instructs the agent to run `new-pack.sh` and to handle a refusal.
 - The scaffolder refuses to create a pack that contains likely secrets unless
   `--allow-secrets` is passed at the user's explicit risk.
 
-See `spec/opf-spec-v1.md` for the pack format and Section 7 for scanning.
+See `spec/opf-spec-v1.md` for the pack format and Section 7 for scanning, and `spec/opf-pack-boundaries.md` for pack sizing, ownership, and the bundle-pack pattern.

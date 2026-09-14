@@ -3,7 +3,7 @@
 **Status:** Normative specification
 **Format version:** OPF v1 (`pack_format: 1`)
 **Scope:** A harness-agnostic pack standard. Any agent harness, CLI tool, or editor can adopt the format.
-**Companion:** `opf-host-layout.md` (non-normative) carries the recommended host layout profile and the distribution topology. Where this spec points to the companion doc, the details live there.
+**Companions:** `opf-host-layout.md` (non-normative) carries the recommended host layout profile and the distribution topology. `opf-pack-boundaries.md` (non-normative) carries guidance on pack sizing, ownership, and the bundle-pack pattern - a judgment call the spec deliberately does not constrain. Where this spec points to a companion doc, the details live there.
 
 **Hard requirement: zero native pack code.** OPF requires no harness-native pack features. Validation, scanning, install, and state tracking are all performed by scripts and skills that any harness able to run shell commands and skills can execute. A harness needs no native pack code to install, update, or remove a pack.
 
@@ -163,6 +163,8 @@ When a pack is installed, its dependencies are installed FIRST, before the pack 
 **Atomicity is PER-PACK, not per-closure.** Each pack in the dependency closure is installed atomically on its own. A failed dependency leaves earlier successful dependency installs in place; the target pack is not installed. The installer does not roll back dependencies that already succeeded.
 
 **Implementation note.** The installer SHOULD present the resolved dependency closure and all lifecycle scripts as a single review (one approval), not one prompt per pack. Serial approve dialogs train users to click through and destroy the approval gate.
+
+**The bundle pattern.** A pack MAY consist of nothing but a `dependencies` array (no items of its own): installing it installs its full dependency closure in one step. This is a composition pattern built entirely out of the mechanism above, not a distinct pack kind - see `opf-pack-boundaries.md` for when to use it and for the update-semantics gotcha (an already-satisfying installed version is not reinstalled, so "update the bundle" only cascades to members if the bundle's own ranges are bumped, or the members run the rolling profile of Section 9.2).
 
 ---
 
