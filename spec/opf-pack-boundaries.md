@@ -29,6 +29,8 @@ Why this matters in practice:
 
 Record ownership in the pack's `OWNERS` file (shipped by `templates/pack-z-template/OWNERS`, currently just "list the maintainers, one per line" with no further guidance - that guidance is: keep the list short, and treat the first name as the lead unless the file says otherwise). An org that wants a stricter, machine-checkable version of this can additionally record it in the manifest's `metadata` block (Section 4.2's layering extension point - `metadata.owner` and similar org-specific keys are validated only as "the object exists," so an org's own validator can enforce presence and freshness on top of that without any spec change).
 
+**This list is not just record-keeping.** It's what a harness checks to decide a consumer's Trust tier for this pack (main spec Section 3; `opf-host-layout.md` Section 1.3): a consumer listed here gets Owned (editable in place); everyone else gets External (locked/read-only), even a teammate, even someone publishing under the same vendor namespace. Vendor, team, and org affiliation are not ownership signals - only this list, or the harness's own maintainer record, is. Keeping the list short (the point of this section) has a second payoff beyond review load: it keeps the Owned/External line unambiguous instead of blurring into "everyone on my team is basically an owner of everything my team touches."
+
 **When a pack outgrows one owner or a small few**, that is usually a sign the pack has grown to cover more than one domain (Section 3) - split it, rather than adding a fourth or fifth co-owner to hold it together.
 
 ---

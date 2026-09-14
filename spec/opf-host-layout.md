@@ -33,17 +33,25 @@ Layout organized by provenance tier:
 
   packs/
     okf-kit/
-      manifest.json
-      artifacts/okf-app.html          # real files live here
+      manifest.json                   # vendor: okf -- you are a listed OWNERS
+      artifacts/okf-app.html          # maintainer, so this is Owned
       data/wiki/
       skills/okf-skill/
 
   .packs-external/
+    okf/
+      other-team-kit/                 # SAME vendor (okf) as okf-kit above,
+        manifest.json                 # but you are NOT in this pack's OWNERS --
+        artifacts/ data/ skills/ tools/ routines/   # still External to you
     acme/
-      onboarding-kit/
-        manifest.json
+      onboarding-kit/                 # different vendor, same reason: not
+        manifest.json                 # a listed maintainer -- also External
         artifacts/ data/ skills/ tools/ routines/
 ```
+
+Two `.packs-external/` entries above share nothing except the reason they're there: neither lists this consumer in `OWNERS`. One happens to carry the same vendor string as the Owned example (`okf`); one doesn't. Vendor namespace, team, and org are irrelevant to the tier - see Section 1.3.
+
+**Owned packs are flat; only External packs are vendor-namespaced.** `~/packs/<pack-name>/` has no vendor or team subdirectory - `okf-kit/`, not `okf/okf-kit/` or `<team>/okf-kit/` - because you are the one naming your own Owned packs and can simply avoid picking a name that collides with another Owned pack of yours. `~/.packs-external/<vendor>/<pack-name>/` DOES nest by vendor, because you don't control what a third-party publisher names their pack, and two different external publishers choosing the same pack name is a real collision you have no other way to avoid. That vendor namespace exists to prevent collisions between publishers you don't control - it is not a general "organize packs by team or org" convention, even when your own Owned packs happen to live in a team-owned git group upstream. Where the pack's source repository lives is provenance (recorded in `.opf-lock`, Section 9.1 of the main spec); it has no bearing on this directory layout.
 
 ### 1.2 Folder conventions
 
@@ -51,10 +59,14 @@ Items live in named folders at a root (system root, project/workspace root, what
 
 ### 1.3 Provenance tiers
 
-Two trust tiers:
+Two trust tiers, determined PER CONSUMER for a given pack, not as a fixed property of the pack itself - the same pack can be Owned for the person who maintains it and External for every other consumer who installs it, including a teammate:
 
-- **Owned**: user-created items, editable in place. Standalone owned items live directly in their native per-type folder: no pack, no indirection, editable in place. The user (or their agent) is the update path.
-- **External**: installed from elsewhere, locked/read-only for the consumer, under `~/.packs-external/<vendor>/<pack-name>/`. Updated only by the pack owner pushing new versions; consumers never edit in place. "Clone to customize" is the only path to Owned, landing as a standalone item in the native folder (or into an owned pack afterward, with materialize-and-symlink).
+- **Owned**: this consumer created the pack, or is listed as a maintainer in its `OWNERS` file (`opf-pack-boundaries.md` Section 2). Editable in place; the user (or their agent) is the update path. Standalone owned items live directly in their native per-type folder: no pack, no indirection, editable in place.
+- **External**: this consumer is neither the creator nor a listed maintainer of the pack. Locked/read-only for this consumer, under `~/.packs-external/<vendor>/<pack-name>/`. Updated only by the pack owner pushing new versions; this consumer never edits in place. "Clone to customize" is the only path to Owned, landing as a standalone item in the native folder (or into an owned pack afterward, with materialize-and-symlink).
+
+**Tier is about maintainership, not source, vendor, team, or org.** Check `OWNERS` (or the harness's own maintainer record) for this specific consumer - never the manifest `vendor` field, which the spec vocabulary already notes is "a namespace, not a verified identity," and never "does this pack belong to my team/org." A pack authored under your own team's vendor namespace, living in a repo your org controls, is still External to you specifically if you are not one of its listed maintainers: you have exactly the same read-only relationship to it that you'd have to a stranger's pack. The reverse also holds - a pack under someone else's vendor namespace is Owned by you if you are a listed co-maintainer of it. A harness that finds no maintainer match for the current consumer MUST default that pack to External for them; locked is the safe default, and matches the spec's "installed packs are locked by default" guarantee (Section 1 of the main spec).
+
+**A harness that doesn't use this directory layout still owes the tier semantics.** The `~/packs/` / `~/.packs-external/` split is one recommended way to realize Owned-vs-External on disk; it is not the only conformant one, and Section 2.6's harness-integration case study already covers a harness (for example a git-native one with auto-discovery and reset-on-update) that manages installs in its own location instead. Whatever the mechanism, it still needs the per-consumer maintainer check above to decide whether in-place edits are allowed or a read-only/reset posture applies - the lock guarantee is what matters, not which folder name expresses it.
 
 ### 1.4 Symlink materialization
 

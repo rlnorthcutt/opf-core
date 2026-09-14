@@ -26,6 +26,34 @@ this skill if it is bundled with opf-core (for example
 `<opf-core>/scripts/validate-pack.sh`). If neither is available, ask the user
 for the opf-core checkout path.
 
+## Trust tier and install location
+
+Before staging (step 3), determine this consumer's trust tier for the
+incoming pack (spec Section 3; `opf-host-layout.md` Section 1.3): check
+whether the current consumer is listed in the pack's `OWNERS` file, or is
+the creator installing a pack they just made. This decides both the install
+location and the update posture, if the harness follows the host-layout
+profile:
+
+- **Owned** (listed maintainer, or the creator): a flat location under the
+  user's own pack workspace, for example `~/packs/<pack-name>/` - NO vendor
+  or team subdirectory (Section 1.1's flat-vs-namespaced rule: vendor
+  nesting exists to prevent collisions between third-party publishers you
+  don't control, not to organize your own packs by team or org).
+- **External** (not a listed maintainer): a vendor-namespaced, locked
+  location, for example `~/.packs-external/<vendor>/<pack-name>/`.
+
+Do NOT use the manifest `vendor` field, matching team/org affiliation, or
+where the source repository lives as a proxy for tier - only `OWNERS` (or
+the harness's own maintainer record) decides it, per consumer. If no
+maintainer match is found, default to External; locked is the safe default.
+This exact directory layout is itself a non-normative recommendation (a
+harness with its own install-location scheme, for example a git-native
+harness with auto-discovery, MAY use a different location entirely), but
+the underlying tier decision and its consequence - editable-in-place for
+Owned, locked/read-only for External - apply regardless of which location
+scheme a harness uses.
+
 ## Procedure
 
 1. **Resolve the dependency closure.** This is the FIRST step. Resolve the
