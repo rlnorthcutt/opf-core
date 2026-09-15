@@ -426,26 +426,15 @@ if git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   SOURCE_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || true)"
 fi
 
-python3 - "$STAGING_DIR" "$PACK_NAME" "$PACK_VERSION" "$INSTALL_DIR" "$PACK_DATA_DIR" "$SOURCE_TYPE" "$SOURCE_URL" "$SOURCE_COMMIT" "$SOURCE_DIR" <<'PY'
-import hashlib, json, os, sys, datetime
+python3 - "$SCRIPT_DIR/compute-pack-checksums.py" "$STAGING_DIR" "$PACK_NAME" "$PACK_VERSION" "$INSTALL_DIR" "$PACK_DATA_DIR" "$SOURCE_TYPE" "$SOURCE_URL" "$SOURCE_COMMIT" "$SOURCE_DIR" <<'PY'
+import json, os, subprocess, sys, datetime
 
-staging, name, version, install_dir, data_dir, source_type, source_url, source_commit, source_dir = sys.argv[1:10]
+compute_checksums_script, staging, name, version, install_dir, data_dir, source_type, source_url, source_commit, source_dir = sys.argv[1:11]
 
-checksums = {}
-skip_rel_paths = {".opf-env", ".opf-lock"}
-for root, dirs, files in os.walk(staging):
-    if ".git" in dirs:
-        dirs.remove(".git")
-    for fname in files:
-        full = os.path.join(root, fname)
-        rel = os.path.relpath(full, staging)
-        if rel in skip_rel_paths:
-            continue
-        h = hashlib.sha256()
-        with open(full, "rb") as fh:
-            for chunk in iter(lambda: fh.read(65536), b""):
-                h.update(chunk)
-        checksums[rel] = f"sha256:{h.hexdigest()}"
+checksums = json.loads(subprocess.run(
+    [sys.executable, compute_checksums_script, staging],
+    capture_output=True, text=True, check=True,
+).stdout)
 
 source = {"type": source_type}
 if source_url:

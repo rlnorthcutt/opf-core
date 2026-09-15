@@ -490,6 +490,30 @@ expect_exit "doctor: --fix --yes registers the missing skill" 0 \
   || fail "doctor: native-tree symlink was created for the missing skill"
 
 echo
+echo "== pack-doctor.sh: an artifact (a plain file, not a subfolder) is registered too =="
+"$NEW_PACK" artifact-pack v -d "artifact test" --with artifact --allow-secrets >/dev/null
+# Rename the template's default skill so it doesn't collide with the
+# already-registered doctor-native/skills/example from the earlier test -
+# this test is about artifact registration, not skills.
+mv artifact-pack/skills/example artifact-pack/skills/artifact-pack-skill
+sed -i 's/^name: example$/name: artifact-pack-skill/' artifact-pack/skills/artifact-pack-skill/SKILL.md
+echo "# report" > artifact-pack/artifacts/report.md
+echo "me" > artifact-pack/OWNERS
+mv artifact-pack doctor-owned/
+expect_exit "doctor: an unregistered artifact FILE (not a .gitkeep placeholder) is flagged" 2 \
+  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me \
+    --native-root doctor-native --only artifact-pack
+expect_exit "doctor: --fix registers the artifact file too" 0 \
+  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me \
+    --native-root doctor-native --fix --yes --only artifact-pack
+[[ -L doctor-native/artifacts/report.md ]] \
+  && pass "doctor: native-tree symlink was created for the artifact file" \
+  || fail "doctor: native-tree symlink was created for the artifact file"
+[[ ! -e doctor-native/artifacts/.gitkeep ]] \
+  && pass "doctor: .gitkeep placeholders are never treated as items" \
+  || fail "doctor: .gitkeep placeholders are never treated as items"
+
+echo
 echo "== pack-doctor.sh: a real collision is reported but never auto-fixed =="
 cp -R golden doctor-owned/collider
 echo "me" > doctor-owned/collider/OWNERS

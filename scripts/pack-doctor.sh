@@ -67,6 +67,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VALIDATOR="$SCRIPT_DIR/validate-pack.sh"
+CHECKSUMS_SCRIPT="$SCRIPT_DIR/compute-pack-checksums.py"
 
 usage() {
   sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -133,12 +134,13 @@ for o in "${OWNERS_ARG[@]:-}"; do [[ -n "$o" ]] && PY_ARGS+=(--owner "$o"); done
 
 run_scan() {
   local out_path="$1"
-  python3 - "$out_path" "$VALIDATOR" "${PY_ARGS[@]}" <<'PY'
-import argparse, hashlib, json, os, re, subprocess, sys
+  python3 - "$out_path" "$VALIDATOR" "$CHECKSUMS_SCRIPT" "${PY_ARGS[@]}" <<'PY'
+import argparse, json, os, re, subprocess, sys
 
 p = argparse.ArgumentParser()
 p.add_argument("out_path")
 p.add_argument("validator")
+p.add_argument("checksums_script")
 p.add_argument("--owned-root", action="append", default=[])
 p.add_argument("--external-root", action="append", default=[])
 p.add_argument("--native-root", default=None)
@@ -154,7 +156,21 @@ external_roots = [os.path.abspath(r) for r in args.external_root]
 native_root = os.path.abspath(args.native_root) if args.native_root else None
 cli_owners = args.owner
 
-ITEM_KINDS = ["skills", "tools", "routines", "agents"]
+ITEM_KINDS = ["skills", "tools", "routines", "agents", "artifacts"]
+
+# Same charset as the manifest name/vendor pattern (schema/v1/manifest.schema.json,
+# scripts/pack-name-pattern.sh). manifest.json is attacker-controlled for an
+# External pack; validate-pack.sh checks this same pattern, but its result
+# does not gate anything else in this script, so a move_pack destination
+# built from a bad name/vendor via os.path.join must be refused here too -
+# os.path.join silently discards dest_root if name/vendor is itself absolute
+# (e.g. "/etc/cron.d/evil"), which would otherwise turn an approved "fix the
+# misplaced pack" into moving it wherever the pack's own manifest says.
+_SAFE_SEGMENT_RX = re.compile(r'^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$')
+
+
+def is_safe_path_segment(value):
+    return isinstance(value, str) and bool(_SAFE_SEGMENT_RX.match(value)) and os.sep not in value
 
 
 def read_manifest(pack_dir):
@@ -243,25 +259,13 @@ def git_identity(pack_dir):
 
 
 def compute_checksums(pack_dir):
-    checksums = {}
-    skip = {".opf-env", ".opf-lock"}
-    for root, dirs, files in os.walk(pack_dir):
-        if ".git" in dirs:
-            dirs.remove(".git")
-        for fname in files:
-            full = os.path.join(root, fname)
-            rel = os.path.relpath(full, pack_dir)
-            if rel in skip:
-                continue
-            h = hashlib.sha256()
-            try:
-                with open(full, "rb") as fh:
-                    for chunk in iter(lambda: fh.read(65536), b""):
-                        h.update(chunk)
-            except OSError:
-                continue
-            checksums[rel] = f"sha256:{h.hexdigest()}"
-    return checksums
+    # Shared with install-pack.sh's .opf-lock writer (scripts/compute-pack-
+    # checksums.py) so the two can't silently disagree about what counts as
+    # drift.
+    return json.loads(subprocess.run(
+        [sys.executable, args.checksums_script, pack_dir],
+        capture_output=True, text=True, check=True,
+    ).stdout)
 
 
 results = []
@@ -311,16 +315,25 @@ for pack in packs:
     structural = "owned" if pack["root_kind"] == "owned-root" else "external"
     if intended is not None and intended != structural:
         if intended == "owned":
-            dest_root = owned_roots[0]
-            dest = os.path.join(dest_root, name)
-            add(
-                "warning",
-                f"you are listed in OWNERS but this pack sits under an external root "
-                f"({pack['structural']} layout); it should be flat under an owned root, "
-                f"e.g. {dest} - a pack sitting in the wrong root can leave a harness that "
-                f"only scans configured roots unable to see its skills/tools at all",
-            )
-            pack_fixes.append({"type": "move_pack", "from": pack_dir, "to": dest})
+            if not is_safe_path_segment(name):
+                add(
+                    "error",
+                    f"you are listed in OWNERS but this pack sits under an external root, "
+                    f"and its manifest name ('{name}') is not a safe single path segment - "
+                    f"refusing to compute a move destination from it. Fix the name (also "
+                    f"flagged by validate-pack.sh) before this can be auto-fixed",
+                )
+            else:
+                dest_root = owned_roots[0]
+                dest = os.path.join(dest_root, name)
+                add(
+                    "warning",
+                    f"you are listed in OWNERS but this pack sits under an external root "
+                    f"({pack['structural']} layout); it should be flat under an owned root, "
+                    f"e.g. {dest} - a pack sitting in the wrong root can leave a harness that "
+                    f"only scans configured roots unable to see its skills/tools at all",
+                )
+                pack_fixes.append({"type": "move_pack", "from": pack_dir, "to": dest})
         else:
             if not vendor:
                 add(
@@ -328,6 +341,15 @@ for pack in packs:
                     "you are not listed in OWNERS and this pack sits under an owned root, "
                     "but it has no vendor field so an external destination cannot be computed "
                     "automatically - add a vendor and move it under an external root by hand",
+                )
+            elif not is_safe_path_segment(vendor) or not is_safe_path_segment(name):
+                add(
+                    "error",
+                    f"you are not listed in OWNERS and this pack sits under an owned root "
+                    f"(editable), but its manifest vendor ('{vendor}') or name ('{name}') is "
+                    f"not a safe single path segment - refusing to compute a move destination "
+                    f"from it. Fix the field (also flagged by validate-pack.sh) before this can "
+                    f"be auto-fixed",
                 )
             else:
                 dest_root = external_roots[0]
@@ -346,8 +368,18 @@ for pack in packs:
             if not os.path.isdir(kind_dir):
                 continue
             for item in sorted(os.listdir(kind_dir)):
+                if item.startswith("."):
+                    # .gitkeep and similar: a git-tracking placeholder for
+                    # an otherwise-empty kind folder (new-pack.sh's --with
+                    # creates these), not a real item. Every pack's empty
+                    # folders would otherwise "collide" on the same name.
+                    continue
                 item_path = os.path.join(kind_dir, item)
-                if not os.path.isdir(item_path):
+                # skills/tools/routines/agents are always subfolders (the
+                # descriptor = subfolder rule), but artifacts can be plain
+                # files (spec Section 5.4: "no descriptor required; opaque
+                # files") - accept either rather than requiring a directory.
+                if not os.path.exists(item_path):
                     continue
                 native_entry = os.path.join(native_root, kind, item)
                 if not os.path.lexists(native_entry):
@@ -375,9 +407,10 @@ for pack in packs:
                             f"by re-pointing the symlink automatically",
                         )
                 else:
+                    kind_word = "directory" if os.path.isdir(native_entry) else "file"
                     add(
                         "info",
-                        f"{kind}/{item}'s native-tree entry ({native_entry}) is a real directory, "
+                        f"{kind}/{item}'s native-tree entry ({native_entry}) is a real {kind_word}, "
                         f"not a symlink to this pack - cannot verify it's the same item",
                     )
 
