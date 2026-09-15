@@ -1,3 +1,8 @@
 # OWNERS
-
-List the maintainers of this pack (GitHub usernames or emails), one per line.
+#
+# List the maintainers of this pack (GitHub usernames or emails), one per
+# line, below this comment block. Keep the list short: one owner, or a
+# small named few (spec opf-pack-boundaries.md Section 2). This file is
+# also how a harness decides your trust tier for this pack (spec
+# opf-host-layout.md Section 1.3) - an empty file means nobody is a listed
+# maintainer, which correctly defaults the pack to External for everyone.
