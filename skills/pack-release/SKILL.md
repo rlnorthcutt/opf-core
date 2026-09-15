@@ -19,14 +19,15 @@ maintain.
 
 ## Ownership assumption
 
-This skill assumes the person running it is the pack's owner: listed in its
-`OWNERS` file, or about to be, for a first release of a pack they just
-created (`create-pack` fills in `OWNERS` at creation time). If `OWNERS`
-lists someone else and the current user isn't on it, stop and confirm
-before editing or committing on their behalf - shipping a change to a pack
-you don't maintain is exactly the External-tier boundary `opf-host-layout.md`
-Section 1.3 exists to enforce, even though this skill never touches
-install-time tier logic itself.
+This skill assumes the pack is Owned for the current user: created via
+`create-pack`, or deliberately claimed as a co-maintainer (moved into the
+owned workspace, with any stale `.opf-lock` removed - Owned packs don't
+carry one, since nothing installs them). If the pack still has an
+`.opf-lock` file, or the user seems unsure whether this is really theirs to
+edit, stop and confirm before committing on their behalf - shipping a
+change to a pack you don't actually maintain is exactly the External-tier
+boundary `opf-host-layout.md` Section 1.3 exists to enforce, even though
+this skill never touches install-time tier logic itself.
 
 ## Working directory assumption
 

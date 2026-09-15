@@ -6,7 +6,7 @@
 #   scripts/new-pack.sh <name> [vendor] [-d <description>] [--with <kinds>] [--allow-secrets]
 #
 # Copies the template to ./<name>, replaces placeholder tokens in all template
-# text files (manifest.json, README.md, CHANGELOG.md, OWNERS, skills/example/SKILL.md),
+# text files (manifest.json, README.md, CHANGELOG.md, skills/example/SKILL.md),
 # creates a .gitkeep-tracked subfolder for each item kind named in --with
 # (comma-separated: tool, routine, agent, artifact - skill and data are
 # already present in the template; each maps to its plural on-disk directory,
@@ -156,7 +156,7 @@ ESC_VENDOR="$(sed_escape_replacement "$VENDOR")"
 ESC_DESCRIPTION="$(sed_escape_replacement "$DESCRIPTION")"
 find "$DEST" -type f -print0 | while IFS= read -r -d '' f; do
   case "$f" in
-    *.json|*.md|*/OWNERS|*/.gitignore) ;;
+    *.json|*.md|*/.gitignore) ;;
     *) continue ;;
   esac
   sed -i \

@@ -36,11 +36,13 @@ the opf-core paths above only to locate the tooling itself.
    - **description**: a one-line summary.
    - **item kinds**: which items the pack will contain (skills, tools, data,
      routines, artifacts).
-   - **owner(s)**: who maintains this pack (goes in `OWNERS`, one per line).
-     If the user is unsure whether this should be a new pack, an addition to
-     an existing one, or a dependency-only bundle pack, see
-     `<opf-core>/spec/opf-pack-boundaries.md` before scaffolding - splitting
-     later is more work than deciding well up front.
+   - **owner(s)**: who maintains this pack, kept to one or a small named few
+     (`opf-pack-boundaries.md` Section 2) - purely for the README note in
+     step 4, not a file OPF checks for anything. If the user is unsure
+     whether this should be a new pack, an addition to an existing one, or
+     a dependency-only bundle pack, see `<opf-core>/spec/opf-pack-boundaries.md`
+     before scaffolding - splitting later is more work than deciding well
+     up front.
 
 2. **Run the scaffolder.** From the directory where the new pack should be
    created, run `bash <opf-core>/scripts/new-pack.sh <name> [vendor] -d
@@ -56,13 +58,18 @@ the opf-core paths above only to locate the tooling itself.
    was omitted or a kind was missed, create the subfolder by hand with a
    `.gitkeep` placeholder so git tracks the empty folder.
 
-4. **Fill the manifest and OWNERS.** Edit `manifest.json` to set `name`,
-   `version` (`0.1.0`), `pack_format` (`1`), `description`, and `vendor`.
-   The scaffolder already substitutes `name`, `vendor`, and `description`.
-   Replace the placeholder text in `OWNERS` with the owner(s) gathered in
-   step 1, one per line, keeping the list short (`opf-pack-boundaries.md`
-   Section 2) - a pack that needs many names on `OWNERS` to function is
-   usually a sign it should be split, not a sign to keep adding names.
+4. **Fill the manifest, and note the owner(s) in README.md.** Edit
+   `manifest.json` to set `name`, `version` (`0.1.0`), `pack_format` (`1`),
+   `description`, and `vendor` - the scaffolder already substitutes `name`,
+   `vendor`, and `description`. Add a short "Maintained by: ..." line to
+   `README.md` naming the owner(s) gathered in step 1. This is governance
+   only - who to ask about a change - not something a harness checks for
+   anything: creating the pack is what makes it Owned (`opf-host-layout.md`
+   Section 1.3), and OPF does not prescribe a dedicated ownership file (see
+   `opf-pack-boundaries.md` Section 2 for the alternatives, including
+   platform-native `CODEOWNERS` for orgs that want real enforcement). A
+   pack that needs many names to stay accountable is usually a sign it
+   should be split, not a sign to keep adding names.
 
 5. **Handle the secrets gate.** `new-pack.sh` runs the secrets scan itself
    after scaffolding and before printing success. If it refuses (exit 1), do

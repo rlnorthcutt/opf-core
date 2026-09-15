@@ -42,15 +42,11 @@ recommendation, not a universal location):
    symlinks (Section 1.4), also pass `--native-root <dir>` so the
    registration check can run. If it doesn't (or you don't know), omit it -
    the script skips that check gracefully with a NOTE rather than guessing.
-4. Determine the identity to check against each pack's `OWNERS`: pass
-   `--owner <name>` for each name/email the current user goes by, or let
-   the script fall back to `git config user.name`/`user.email` read from
-   inside each pack.
 
 ## Procedure
 
 1. **Run a report-only scan first.** Never pass `--fix` on the first run:
-   `bash <opf-core>/scripts/pack-doctor.sh --owned-root <dir> --external-root <dir> [--native-root <dir>] [--owner <name> ...]`.
+   `bash <opf-core>/scripts/pack-doctor.sh --owned-root <dir> --external-root <dir> [--native-root <dir>]`.
 
 2. **Translate the report into plain language, per pack.** Do not paste
    raw script output at the user. For each pack with findings, summarize
@@ -58,9 +54,10 @@ recommendation, not a universal location):
    script's own explanations (they already cite the relevant spec section)
    as your source of truth, but shorten them. Group findings by what the
    fix would be:
-   - **Fixable now** (`move_pack`, `create_symlink`, `remove_symlink` in
-     the script's fix list): "this pack is in the wrong place / this skill
-     isn't registered - I can fix this."
+   - **Fixable now** (`create_symlink`, `remove_symlink`, `remove_stale_lock`
+     in the script's fix list): "this skill isn't registered" or "this pack
+     has a leftover install lock from before it was claimed - I can fix
+     this."
    - **Needs your decision, not fixable by this skill**: a naming
      collision (spec `opf-host-layout.md` Section 1.6 - two packs both
      have an item with the same id; ask the user which one to rename),
@@ -93,6 +90,13 @@ recommendation, not a universal location):
   `install.sh`, and never resolve a missing dependency by installing it.
   Those go through `pack-install`, which has its own approval gates - a
   diagnostic tool must not silently gain the power to install code.
+- The script never moves a pack between the owned and external roots -
+  which direction a placement mismatch should resolve in is a decision
+  only the consumer can make (spec `opf-host-layout.md` Section 1.3). The
+  one placement issue it does fix is a stale `.opf-lock` left behind in an
+  owned pack (a claim that moved the pack but never cleaned up the lock);
+  removing the lock is always safe because Owned packs are never supposed
+  to carry one.
 - A naming collision (two packs' native-tree entries for the same item id
   pointing at different packs) is never auto-fixed, even with `--yes`: the
   script reports it as an error and expects a human to choose which pack
@@ -110,6 +114,8 @@ recommendation, not a universal location):
   risk being subtly wrong. Report what's found and let the user (or
   `pack-install`, which does implement real resolution) judge it.
 
-See `spec/opf-host-layout.md` Section 1.3 for trust tier and Section 1.4-1.6
-for symlink materialization and the collision rule, and
-`spec/opf-pack-boundaries.md` Section 2 for `OWNERS`.
+See `spec/opf-host-layout.md` Section 1.3 for trust tier (decided by how a
+pack arrived, never by a file) and Section 1.4-1.6 for symlink
+materialization and the collision rule, and `spec/opf-pack-boundaries.md`
+Section 2 for where to record who maintains a pack (a README note, or
+platform-native `CODEOWNERS`) - governance, unrelated to tier.

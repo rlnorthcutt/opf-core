@@ -28,31 +28,27 @@ for the opf-core checkout path.
 
 ## Trust tier and install location
 
-Before staging (step 3), determine this consumer's trust tier for the
-incoming pack (spec Section 3; `opf-host-layout.md` Section 1.3): check
-whether the current consumer is listed in the pack's `OWNERS` file, or is
-the creator installing a pack they just made. This decides both the install
-location and the update posture, if the harness follows the host-layout
-profile:
+A pack obtained through this skill is External by definition (spec Section
+3; `opf-host-layout.md` Section 1.3): installing a pack never makes it
+yours to edit in place, regardless of vendor, team, org, or whatever git/
+platform write access the consumer happens to have to the pack's source
+repository (that access is usually broader than any one pack, so it is not
+a substitute for this decision). Stage and install to a locked, vendor-
+namespaced location, for example `~/.packs-external/<vendor>/<pack-name>/`
+- NOT the flat, editable `~/packs/<pack-name>/` workspace.
 
-- **Owned** (listed maintainer, or the creator): a flat location under the
-  user's own pack workspace, for example `~/packs/<pack-name>/` - NO vendor
-  or team subdirectory (Section 1.1's flat-vs-namespaced rule: vendor
-  nesting exists to prevent collisions between third-party publishers you
-  don't control, not to organize your own packs by team or org).
-- **External** (not a listed maintainer): a vendor-namespaced, locked
-  location, for example `~/.packs-external/<vendor>/<pack-name>/`.
+If the user says this pack is actually theirs - they created it, or they
+are deliberately becoming a co-maintainer - this skill is the wrong tool
+for that: `create-pack` handles the first case, and claiming co-maintainer
+status is a deliberate move into the owned workspace (dropping any stale
+`.opf-lock` in the process, since Owned packs don't carry one), not
+something this skill does on the user's behalf.
 
-Do NOT use the manifest `vendor` field, matching team/org affiliation, or
-where the source repository lives as a proxy for tier - only `OWNERS` (or
-the harness's own maintainer record) decides it, per consumer. If no
-maintainer match is found, default to External; locked is the safe default.
 This exact directory layout is itself a non-normative recommendation (a
 harness with its own install-location scheme, for example a git-native
 harness with auto-discovery, MAY use a different location entirely), but
-the underlying tier decision and its consequence - editable-in-place for
-Owned, locked/read-only for External - apply regardless of which location
-scheme a harness uses.
+the underlying rule - installed means locked, until deliberately claimed -
+applies regardless of which location scheme a harness uses.
 
 ## Procedure
 

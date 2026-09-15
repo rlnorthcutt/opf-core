@@ -441,50 +441,69 @@ echo
 echo "== pack-doctor.sh: clean pack reports OK =="
 mkdir -p doctor-owned doctor-external doctor-native/skills
 cp -R golden doctor-owned/golden
-echo "me" > doctor-owned/golden/OWNERS
-expect_exit "doctor: a correctly placed pack with no native-root reports clean" 0 \
-  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me
+expect_exit "doctor: a correctly placed pack (no lock, no native-root) reports clean" 0 \
+  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external
 
 echo
-echo "== pack-doctor.sh: misplaced pack is flagged, then fixed =="
+echo "== pack-doctor.sh: a pack with no lock sitting under an external root is NOT flagged =="
 mkdir -p doctor-external/acme
-cp -R golden doctor-external/acme/misplaced-owned
-echo "me" > doctor-external/acme/misplaced-owned/OWNERS
-# golden's manifest still says "name": "golden" after a plain copy; give this
-# copy its own identity, or pack-doctor (correctly) computes the destination
-# from the declared name and finds doctor-owned/golden already taken.
+cp -R golden doctor-external/acme/not-yet-installed
 python3 -c "
 import json
-m = json.load(open('doctor-external/acme/misplaced-owned/manifest.json'))
-m['name'] = 'misplaced-owned'
-json.dump(m, open('doctor-external/acme/misplaced-owned/manifest.json', 'w'))
+m = json.load(open('doctor-external/acme/not-yet-installed/manifest.json'))
+m['name'] = 'not-yet-installed'
+json.dump(m, open('doctor-external/acme/not-yet-installed/manifest.json', 'w'))
 "
-# Distinct skill id from golden's "example" - keeps the later registration
-# tests independent of each other (both would otherwise want the same
-# native-tree slot, which is a real scenario but a different test, below).
-mv doctor-external/acme/misplaced-owned/skills/example doctor-external/acme/misplaced-owned/skills/example-b
-sed -i 's/^name: example$/name: example-b/' doctor-external/acme/misplaced-owned/skills/example-b/SKILL.md
-out="$("$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me 2>&1)"
-rc=$?
-[[ $rc -eq 2 ]] && echo "$out" | grep -qi "should be flat under an owned root" \
-  && pass "doctor: misplaced-owned pack is flagged as a warning with the right reason" \
-  || fail "doctor: misplaced-owned pack is flagged as a warning with the right reason" "exit=$rc"
+# Distinct skill id from golden's "example": this pack persists for the rest
+# of the run, and a later test turns on --native-root, which would otherwise
+# see two same-named unregistered items and report a spurious collision.
+mv doctor-external/acme/not-yet-installed/skills/example doctor-external/acme/not-yet-installed/skills/not-yet-installed-skill
+sed -i 's/^name: example$/name: not-yet-installed-skill/' doctor-external/acme/not-yet-installed/skills/not-yet-installed-skill/SKILL.md
+expect_exit "doctor: no .opf-lock under an external root is unremarkable, not a placement error" 0 \
+  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external --only not-yet-installed
 
-expect_exit "doctor: --fix --yes --only moves the misplaced pack" 0 \
-  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me \
-    --fix --yes --only misplaced-owned
-[[ -d doctor-owned/misplaced-owned && ! -e doctor-external/acme/misplaced-owned ]] \
-  && pass "doctor: misplaced pack actually moved to the owned root" \
-  || fail "doctor: misplaced pack actually moved to the owned root"
+echo
+echo "== pack-doctor.sh: a stale lock in the owned workspace is flagged, then fixed =="
+cp -R golden doctor-owned/claimed-pack
+python3 -c "
+import json
+m = json.load(open('doctor-owned/claimed-pack/manifest.json'))
+m['name'] = 'claimed-pack'
+json.dump(m, open('doctor-owned/claimed-pack/manifest.json', 'w'))
+"
+# Distinct skill id, same reason as not-yet-installed above.
+mv doctor-owned/claimed-pack/skills/example doctor-owned/claimed-pack/skills/claimed-pack-skill
+sed -i 's/^name: example$/name: claimed-pack-skill/' doctor-owned/claimed-pack/skills/claimed-pack-skill/SKILL.md
+# A lock left behind from before this pack was claimed as Owned (moved into
+# the editable workspace, but the lock was never cleaned up).
+echo '{"name": "claimed-pack", "version": "1.0.0", "checksums": {}}' > doctor-owned/claimed-pack/.opf-lock
+out="$("$DOCTOR" --owned-root doctor-owned --external-root doctor-external --only claimed-pack 2>&1)"
+rc=$?
+[[ $rc -eq 2 ]] && echo "$out" | grep -qi "stale lock\|never finished" \
+  && pass "doctor: a stale .opf-lock in an owned pack is flagged as a warning with the right reason" \
+  || fail "doctor: a stale .opf-lock in an owned pack is flagged as a warning with the right reason" "exit=$rc"
+
+expect_exit "doctor: --fix --yes --only removes the stale lock" 0 \
+  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external \
+    --fix --yes --only claimed-pack
+[[ -d doctor-owned/claimed-pack && ! -e doctor-owned/claimed-pack/.opf-lock ]] \
+  && pass "doctor: stale lock removed, pack itself left in place (never moved)" \
+  || fail "doctor: stale lock removed, pack itself left in place (never moved)"
+
+# Done with these two - remove them before native-root registration testing
+# begins below. --only scopes which pack a FIX applies to, not what the
+# scan/report covers, so leaving them in place would leak their own
+# unregistered items into later exit-code assertions as spurious warnings.
+rm -rf doctor-external/acme/not-yet-installed doctor-owned/claimed-pack
 
 echo
 echo "== pack-doctor.sh: unregistered skill is flagged, then fixed =="
 expect_exit "doctor: skill missing from the native tree is flagged (with --native-root)" 2 \
-  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me \
-    --native-root doctor-native
+  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external \
+    --native-root doctor-native --only golden
 expect_exit "doctor: --fix --yes registers the missing skill" 0 \
-  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me \
-    --native-root doctor-native --fix --yes
+  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external \
+    --native-root doctor-native --fix --yes --only golden
 [[ -L doctor-native/skills/example ]] \
   && pass "doctor: native-tree symlink was created for the missing skill" \
   || fail "doctor: native-tree symlink was created for the missing skill"
@@ -498,13 +517,12 @@ echo "== pack-doctor.sh: an artifact (a plain file, not a subfolder) is register
 mv artifact-pack/skills/example artifact-pack/skills/artifact-pack-skill
 sed -i 's/^name: example$/name: artifact-pack-skill/' artifact-pack/skills/artifact-pack-skill/SKILL.md
 echo "# report" > artifact-pack/artifacts/report.md
-echo "me" > artifact-pack/OWNERS
 mv artifact-pack doctor-owned/
 expect_exit "doctor: an unregistered artifact FILE (not a .gitkeep placeholder) is flagged" 2 \
-  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me \
+  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external \
     --native-root doctor-native --only artifact-pack
 expect_exit "doctor: --fix registers the artifact file too" 0 \
-  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me \
+  "$DOCTOR" --owned-root doctor-owned --external-root doctor-external \
     --native-root doctor-native --fix --yes --only artifact-pack
 [[ -L doctor-native/artifacts/report.md ]] \
   && pass "doctor: native-tree symlink was created for the artifact file" \
@@ -516,7 +534,6 @@ expect_exit "doctor: --fix registers the artifact file too" 0 \
 echo
 echo "== pack-doctor.sh: a real collision is reported but never auto-fixed =="
 cp -R golden doctor-owned/collider
-echo "me" > doctor-owned/collider/OWNERS
 python3 -c "
 import json
 m = json.load(open('doctor-owned/collider/manifest.json'))
@@ -524,7 +541,7 @@ m['name'] = 'collider'
 json.dump(m, open('doctor-owned/collider/manifest.json', 'w'))
 "
 ln -sf "$(cd doctor-owned/golden/skills/example && pwd)" doctor-native/skills/example  # steal the entry
-out="$("$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me --native-root doctor-native --fix --yes 2>&1)"
+out="$("$DOCTOR" --owned-root doctor-owned --external-root doctor-external --native-root doctor-native --fix --yes 2>&1)"
 rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -qi "naming collision" \
   && pass "doctor: a real collision is reported as an error, not silently resolved" \
@@ -539,7 +556,6 @@ mkdir -p doctor-native2/skills
 "$NEW_PACK" race-a v -d "race test a" --allow-secrets >/dev/null
 "$NEW_PACK" race-b v -d "race test b" --allow-secrets >/dev/null
 for p in race-a race-b; do
-  echo "me" > "$p/OWNERS"
   mv "$p/skills/example" "$p/skills/race-item"
   sed -i 's/^name: example$/name: race-item/' "$p/skills/race-item/SKILL.md"
   mv "$p" doctor-owned/
@@ -551,7 +567,7 @@ done
 # state is a genuine collision (one pack registered, the other's identical
 # item now collides with it) - correctly an ERROR, not still a plain
 # "unregistered" warning, since the slot is no longer empty.
-out="$("$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me \
+out="$("$DOCTOR" --owned-root doctor-owned --external-root doctor-external \
   --native-root doctor-native2 --fix --yes --only race-a --only race-b 2>&1)"
 rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -qi "naming collision" \
@@ -563,20 +579,19 @@ rc=$?
 
 echo
 echo "== pack-doctor.sh: declined confirmation leaves a fix unapplied =="
-mkdir -p doctor-external/other
-cp -R golden doctor-external/other/decline-test
-echo "me" > doctor-external/other/decline-test/OWNERS
+cp -R golden doctor-owned/decline-test
 python3 -c "
 import json
-m = json.load(open('doctor-external/other/decline-test/manifest.json'))
+m = json.load(open('doctor-owned/decline-test/manifest.json'))
 m['name'] = 'decline-test'
-json.dump(m, open('doctor-external/other/decline-test/manifest.json', 'w'))
+json.dump(m, open('doctor-owned/decline-test/manifest.json', 'w'))
 "
-echo "n" | "$DOCTOR" --owned-root doctor-owned --external-root doctor-external --owner me \
+echo '{"name": "decline-test", "version": "1.0.0", "checksums": {}}' > doctor-owned/decline-test/.opf-lock
+echo "n" | "$DOCTOR" --owned-root doctor-owned --external-root doctor-external \
   --fix --only decline-test >/dev/null 2>&1
-[[ -d doctor-external/other/decline-test ]] \
-  && pass "doctor: declining the confirmation prompt leaves the pack in place" \
-  || fail "doctor: declining the confirmation prompt leaves the pack in place"
+[[ -f doctor-owned/decline-test/.opf-lock ]] \
+  && pass "doctor: declining the confirmation prompt leaves the stale lock in place" \
+  || fail "doctor: declining the confirmation prompt leaves the stale lock in place"
 
 # =============================================================================
 echo

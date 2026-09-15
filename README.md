@@ -31,11 +31,11 @@ Either way, `spec/opf-spec-v1.md` is the normative contract: adopt as much or as
 - `schema/v1/` - the JSON Schema for the OPF v1 manifest.
 - `skills/pack-install/` - the canonical pack-install skill (validate, scan, approve, install, swap).
 - `skills/create-pack/` - the skill for scaffolding a new pack from the template.
-- `skills/pack-doctor/` - diagnoses installed packs (placement vs. trust tier, native-tree registration, `.opf-lock` drift, dependency gaps) and fixes the safe ones with approval.
+- `skills/pack-doctor/` - diagnoses installed packs (a stale install lock left in an owned pack, native-tree registration, `.opf-lock` drift, dependency gaps) and fixes the safe ones with approval.
 - `scripts/validate-pack.sh` - validate a pack directory against the spec.
 - `scripts/new-pack.sh` - scaffold a new pack from the template.
 - `scripts/install-pack.sh` - deterministically install/update a single pack (validate, stage, scan, approve, install, lock, atomic swap); the hard-enforcement counterpart to the pack-install skill for harnesses that can run scripts but not skills.
-- `scripts/pack-doctor.sh` - scans every pack under given owned/external roots for placement-vs-tier mismatches, missing/dangling/colliding native-tree symlinks, `.opf-lock` drift, and dependency gaps; `--fix` applies the safe ones after confirmation.
+- `scripts/pack-doctor.sh` - scans every pack under given owned/external roots for a stale install lock left in an owned pack, missing/dangling/colliding native-tree symlinks, `.opf-lock` drift, and dependency gaps; `--fix` applies the safe ones after confirmation.
 - `scripts/ci-install-scanners.sh` - installs semgrep/gitleaks/shellcheck for CI; shared by both CI templates below so they can't silently drift to different tool versions.
 - `ci/semgrep-opf-rules.yml` - curated, registry-independent semgrep ruleset mapped to the spec's dangerous-pattern categories; the CI-blocking scan gate.
 - `scripts/resolve-scan-excludes.py` - resolves a manifest's `scan.exclude` patterns to actual files for `install-pack.sh`, filtering out anything that is an executable file type (exclusions never apply to those).
@@ -70,7 +70,7 @@ Diagnose installed packs: `scripts/pack-doctor.sh --owned-root <dir> --external-
 scripts/e2e-smoke-test.sh
 ```
 
-Runs the create -> validate -> install -> update -> downgrade lifecycle end to end in a throwaway temp directory, plus the security/atomicity guarantees the spec claims (secrets gate, path-traversal rejection, atomic install failure, validator fail-closed behavior) and pack-doctor's diagnose/fix behavior (misplaced packs, missing/colliding registrations, declined confirmations). Uninstall is not yet covered (there is no `uninstall-pack.sh`; see `TODO.md`). It prints which of semgrep/gitleaks/shellcheck are installed, since their absence changes which code paths run; `.github/workflows/self-test.yml` runs it both ways on every push/PR so the real scanner paths are exercised even when your local machine doesn't have those tools.
+Runs the create -> validate -> install -> update -> downgrade lifecycle end to end in a throwaway temp directory, plus the security/atomicity guarantees the spec claims (secrets gate, path-traversal rejection, atomic install failure, validator fail-closed behavior) and pack-doctor's diagnose/fix behavior (a stale install lock, missing/colliding registrations, declined confirmations). Uninstall is not yet covered (there is no `uninstall-pack.sh`; see `TODO.md`). It prints which of semgrep/gitleaks/shellcheck are installed, since their absence changes which code paths run; `.github/workflows/self-test.yml` runs it both ways on every push/PR so the real scanner paths are exercised even when your local machine doesn't have those tools.
 
 ## Status
 

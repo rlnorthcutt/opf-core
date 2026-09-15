@@ -19,34 +19,38 @@
 #                          opf-host-layout.md Section 1.4). Optional: not
 #                          every harness uses this pattern; omitting it
 #                          just skips the registration check with a NOTE.
-#   --owner NAME           An identity to check against each pack's OWNERS
-#                          file (repeatable). Default: this pack's own
-#                          `git config user.name` / `user.email`, read from
-#                          inside each pack's directory.
 #   --only PACK_NAME       Scope --fix to only this pack (repeatable). Without
 #                          it, --fix applies to every pack with a fixable
 #                          finding. Report-only runs always cover every pack
 #                          regardless of --only.
 #   --fix                  Apply safe, reversible fixes after confirmation:
-#                          move a misplaced pack to its correct root, or
-#                          create/remove a native-tree symlink. Everything
-#                          else (collisions, dependency gaps, checksum
-#                          drift) is reported only - those need a human
-#                          decision, not a mechanical fix.
+#                          remove a stale .opf-lock left behind in an owned
+#                          workspace, or create/remove a native-tree
+#                          symlink. Everything else (collisions, dependency
+#                          gaps, checksum drift) is reported only - those
+#                          need a human decision, not a mechanical fix.
 #   --yes                  Skip confirmation prompts for --fix.
 #   -h, --help
 #
 # What this checks, per discovered pack:
 #   - manifest/structural validity (delegates to validate-pack.sh)
-#   - placement: does the pack's actual location (flat under an owned root,
-#     or vendor-nested under an external root) match the tier implied by
-#     OWNERS (spec Section 3; opf-host-layout.md Section 1.3)? This is the
-#     "pack is in the wrong place" case - the exact scenario that can leave
-#     a pack's skills unregistered in the native tree.
+#   - placement: trust tier (spec Section 3; opf-host-layout.md Section 1.3)
+#     is decided by HOW a pack arrived - created/claimed means Owned,
+#     pack-install means External - not by OWNERS, vendor, or repo
+#     permissions, none of which this script has any way to verify anyway.
+#     .opf-lock is the one artifact the install procedure actually writes,
+#     so its presence is a real (if imperfect) signal that a pack went
+#     through pack-install: a pack that HAS a lock but sits under an owned
+#     (editable) root looks like an installed pack nobody finished claiming
+#     - claiming means moving it AND dropping the stale lock, since Owned
+#     packs don't carry one. The reverse (no lock, sitting under an
+#     external root) is NOT flagged: it just means not-yet-installed,
+#     which is unremarkable.
 #   - registration (only with --native-root): does each item (skill, tool,
-#     routine, agent) have a native-tree entry that resolves to THIS pack's
-#     copy? Missing, dangling, or pointing at a different pack are each
-#     reported distinctly.
+#     routine, agent, artifact) have a native-tree entry that resolves to
+#     THIS pack's copy? Missing, dangling, or pointing at a different pack
+#     are each reported distinctly. This is the check that catches "the
+#     pack is somewhere the harness doesn't look," independent of tier.
 #   - lock drift: does .opf-lock's recorded checksums match the pack's
 #     current on-disk content?
 #   - dependencies: is each declared dependency (vendor/name) findable among
@@ -56,10 +60,12 @@
 #     than guess, and this tool does not implement one); found/not-found
 #     and the versions on each side are reported so a human can judge.
 #
-# What this does NOT do: install anything, run any pack's install.sh, or
-# resolve a dependency that's missing. Those go through pack-install, with
-# its own approval gates - a diagnostic tool must not silently gain the
-# power to install code.
+# What this does NOT do: install anything, run any pack's install.sh, move
+# any pack, or resolve a dependency that's missing. Moving a pack between
+# tiers is now always a deliberate human act (see above), not a fix this
+# tool guesses at; installing goes through pack-install, with its own
+# approval gates - a diagnostic tool must not silently gain the power to
+# install code or relocate a pack based on an inference it can't verify.
 #
 # Exit codes: 0 clean, 1 at least one error-class finding, 2 warnings only.
 #
@@ -70,13 +76,12 @@ VALIDATOR="$SCRIPT_DIR/validate-pack.sh"
 CHECKSUMS_SCRIPT="$SCRIPT_DIR/compute-pack-checksums.py"
 
 usage() {
-  sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,70p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 OWNED_ROOTS=()
 EXTERNAL_ROOTS=()
 NATIVE_ROOT=""
-OWNERS_ARG=()
 ONLY=()
 FIX=0
 YES=0
@@ -92,9 +97,6 @@ while [[ $# -gt 0 ]]; do
     --native-root)
       [[ $# -ge 2 ]] || { echo "ERROR: --native-root requires a value" >&2; exit 1; }
       NATIVE_ROOT="$2"; shift 2 ;;
-    --owner)
-      [[ $# -ge 2 ]] || { echo "ERROR: --owner requires a value" >&2; exit 1; }
-      OWNERS_ARG+=("$2"); shift 2 ;;
     --only)
       [[ $# -ge 2 ]] || { echo "ERROR: --only requires a value" >&2; exit 1; }
       ONLY+=("$2"); shift 2 ;;
@@ -124,18 +126,18 @@ confirm() {
 
 # --- Scan: one python3 pass computes the full report as JSON -----------------
 # A function, not a one-shot: --fix needs to re-scan between applying
-# move_pack fixes and applying symlink fixes, because a symlink target
-# computed from a pre-move snapshot would point at a pack's OLD location.
+# dangling-symlink-removal fixes and applying symlink-creation fixes,
+# because removing a dangling symlink can turn an item's status from
+# "dangling" to "missing," which only a fresh scan will recognize.
 PY_ARGS=()
 for r in "${OWNED_ROOTS[@]}"; do PY_ARGS+=(--owned-root "$r"); done
 for r in "${EXTERNAL_ROOTS[@]}"; do PY_ARGS+=(--external-root "$r"); done
 if [[ -n "$NATIVE_ROOT" ]]; then PY_ARGS+=(--native-root "$NATIVE_ROOT"); fi
-for o in "${OWNERS_ARG[@]:-}"; do [[ -n "$o" ]] && PY_ARGS+=(--owner "$o"); done
 
 run_scan() {
   local out_path="$1"
   python3 - "$out_path" "$VALIDATOR" "$CHECKSUMS_SCRIPT" "${PY_ARGS[@]}" <<'PY'
-import argparse, json, os, re, subprocess, sys
+import argparse, json, os, subprocess, sys
 
 p = argparse.ArgumentParser()
 p.add_argument("out_path")
@@ -144,7 +146,6 @@ p.add_argument("checksums_script")
 p.add_argument("--owned-root", action="append", default=[])
 p.add_argument("--external-root", action="append", default=[])
 p.add_argument("--native-root", default=None)
-p.add_argument("--owner", action="append", default=[])
 args = p.parse_args()
 
 # Absolute, right away: a symlink's relative target resolves relative to
@@ -154,23 +155,8 @@ args = p.parse_args()
 owned_roots = [os.path.abspath(r) for r in args.owned_root]
 external_roots = [os.path.abspath(r) for r in args.external_root]
 native_root = os.path.abspath(args.native_root) if args.native_root else None
-cli_owners = args.owner
 
 ITEM_KINDS = ["skills", "tools", "routines", "agents", "artifacts"]
-
-# Same charset as the manifest name/vendor pattern (schema/v1/manifest.schema.json,
-# scripts/pack-name-pattern.sh). manifest.json is attacker-controlled for an
-# External pack; validate-pack.sh checks this same pattern, but its result
-# does not gate anything else in this script, so a move_pack destination
-# built from a bad name/vendor via os.path.join must be refused here too -
-# os.path.join silently discards dest_root if name/vendor is itself absolute
-# (e.g. "/etc/cron.d/evil"), which would otherwise turn an approved "fix the
-# misplaced pack" into moving it wherever the pack's own manifest says.
-_SAFE_SEGMENT_RX = re.compile(r'^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$')
-
-
-def is_safe_path_segment(value):
-    return isinstance(value, str) and bool(_SAFE_SEGMENT_RX.match(value)) and os.sep not in value
 
 
 def read_manifest(pack_dir):
@@ -191,7 +177,7 @@ def discover(root, nested):
         for name in sorted(os.listdir(root)):
             pack_dir = os.path.join(root, name)
             if os.path.isfile(os.path.join(pack_dir, "manifest.json")):
-                found.append((pack_dir, "flat"))
+                found.append(pack_dir)
     else:
         for vendor in sorted(os.listdir(root)):
             vendor_dir = os.path.join(root, vendor)
@@ -200,26 +186,26 @@ def discover(root, nested):
             for name in sorted(os.listdir(vendor_dir)):
                 pack_dir = os.path.join(vendor_dir, name)
                 if os.path.isfile(os.path.join(pack_dir, "manifest.json")):
-                    found.append((pack_dir, "nested"))
+                    found.append(pack_dir)
     return found
 
 
 packs = []
 seen_realpaths = set()
 for root in owned_roots:
-    for pack_dir, structural in discover(root, nested=False):
+    for pack_dir in discover(root, nested=False):
         rp = os.path.realpath(pack_dir)
         if rp in seen_realpaths:
             continue
         seen_realpaths.add(rp)
-        packs.append({"path": pack_dir, "structural": structural, "root_kind": "owned-root"})
+        packs.append({"path": pack_dir, "root_kind": "owned-root"})
 for root in external_roots:
-    for pack_dir, structural in discover(root, nested=True):
+    for pack_dir in discover(root, nested=True):
         rp = os.path.realpath(pack_dir)
         if rp in seen_realpaths:
             continue
         seen_realpaths.add(rp)
-        packs.append({"path": pack_dir, "structural": structural, "root_kind": "external-root"})
+        packs.append({"path": pack_dir, "root_kind": "external-root"})
 
 # Index every discovered pack by (vendor, name) for the dependency check.
 by_vendor_name = {}
@@ -227,35 +213,6 @@ for pack in packs:
     manifest = read_manifest(pack["path"]) or {}
     key = (manifest.get("vendor") or "", manifest.get("name") or "")
     by_vendor_name.setdefault(key, []).append((pack["path"], manifest.get("version") or ""))
-
-
-def owners_list(pack_dir):
-    owners_path = os.path.join(pack_dir, "OWNERS")
-    if not os.path.isfile(owners_path):
-        return None
-    names = []
-    with open(owners_path) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            names.append(line)
-    return names
-
-
-def git_identity(pack_dir):
-    identities = []
-    for key in ("user.name", "user.email"):
-        try:
-            out = subprocess.run(
-                ["git", "-C", pack_dir, "config", "--get", key],
-                capture_output=True, text=True, timeout=5,
-            )
-            if out.returncode == 0 and out.stdout.strip():
-                identities.append(out.stdout.strip())
-        except (OSError, subprocess.SubprocessError):
-            pass
-    return identities
 
 
 def compute_checksums(pack_dir):
@@ -300,66 +257,22 @@ for pack in packs:
     except OSError as exc:
         add("warning", f"could not run validate-pack.sh: {exc}")
 
-    # --- (b) placement: structural location vs OWNERS-implied tier ---------
-    owners = owners_list(pack_dir)
-    identities = list(cli_owners) if cli_owners else git_identity(pack_dir)
-    if owners is None:
-        add("info", "no OWNERS file; cannot determine intended trust tier for this pack")
-        intended = None
-    elif not identities:
-        add("info", "no --owner given and no git identity found; cannot check OWNERS membership")
-        intended = None
-    else:
-        intended = "owned" if any(i in owners for i in identities) else "external"
-
+    # --- (b) placement: has this pack been installed, and where does it sit? ---
+    lock_path = os.path.join(pack_dir, ".opf-lock")
+    has_lock = os.path.isfile(lock_path)
     structural = "owned" if pack["root_kind"] == "owned-root" else "external"
-    if intended is not None and intended != structural:
-        if intended == "owned":
-            if not is_safe_path_segment(name):
-                add(
-                    "error",
-                    f"you are listed in OWNERS but this pack sits under an external root, "
-                    f"and its manifest name ('{name}') is not a safe single path segment - "
-                    f"refusing to compute a move destination from it. Fix the name (also "
-                    f"flagged by validate-pack.sh) before this can be auto-fixed",
-                )
-            else:
-                dest_root = owned_roots[0]
-                dest = os.path.join(dest_root, name)
-                add(
-                    "warning",
-                    f"you are listed in OWNERS but this pack sits under an external root "
-                    f"({pack['structural']} layout); it should be flat under an owned root, "
-                    f"e.g. {dest} - a pack sitting in the wrong root can leave a harness that "
-                    f"only scans configured roots unable to see its skills/tools at all",
-                )
-                pack_fixes.append({"type": "move_pack", "from": pack_dir, "to": dest})
-        else:
-            if not vendor:
-                add(
-                    "warning",
-                    "you are not listed in OWNERS and this pack sits under an owned root, "
-                    "but it has no vendor field so an external destination cannot be computed "
-                    "automatically - add a vendor and move it under an external root by hand",
-                )
-            elif not is_safe_path_segment(vendor) or not is_safe_path_segment(name):
-                add(
-                    "error",
-                    f"you are not listed in OWNERS and this pack sits under an owned root "
-                    f"(editable), but its manifest vendor ('{vendor}') or name ('{name}') is "
-                    f"not a safe single path segment - refusing to compute a move destination "
-                    f"from it. Fix the field (also flagged by validate-pack.sh) before this can "
-                    f"be auto-fixed",
-                )
-            else:
-                dest_root = external_roots[0]
-                dest = os.path.join(dest_root, vendor, name)
-                add(
-                    "warning",
-                    f"you are not listed in OWNERS but this pack sits under an owned root "
-                    f"(editable); it should be locked under an external root, e.g. {dest}",
-                )
-                pack_fixes.append({"type": "move_pack", "from": pack_dir, "to": dest})
+    if has_lock and structural == "owned":
+        add(
+            "warning",
+            f"this pack has a .opf-lock (it went through pack-install at some point) but "
+            f"sits under an owned root - looks like a claim that was started (moved into "
+            f"the editable workspace) but never finished (the stale lock was never "
+            f"removed). Owned packs don't carry a lock; if this is really yours now, the "
+            f"fix is to remove .opf-lock, not to move the pack",
+        )
+        pack_fixes.append({"type": "remove_stale_lock", "path": lock_path})
+    # The reverse (no lock, sitting under an external root) is deliberately
+    # NOT flagged: it just means not yet installed, which is unremarkable.
 
     # --- (c) native-tree registration (only if --native-root given) --------
     if native_root:
@@ -415,8 +328,7 @@ for pack in packs:
                     )
 
     # --- (d) .opf-lock drift ------------------------------------------------
-    lock_path = os.path.join(pack_dir, ".opf-lock")
-    if os.path.isfile(lock_path):
+    if has_lock:
         try:
             with open(lock_path) as fh:
                 lock = json.load(fh)
@@ -535,12 +447,12 @@ for f in data["fixes"]:
     if t not in wanted:
         continue
     pack = f["pack"]
-    if t == "move_pack":
-        a, b = f["from"], f["to"]
-    elif t == "create_symlink":
+    if t == "create_symlink":
         a, b = f["native_path"], f["target"]
     elif t == "remove_symlink":
         a, b = f["native_path"], ""
+    elif t == "remove_stale_lock":
+        a, b = f["path"], ""
     else:
         continue
     print(pack + "\t" + t + "\t" + a + "\t" + b)
@@ -549,7 +461,7 @@ for f in data["fixes"]:
 
 apply_fixes() {
   # apply_fixes OUT_PATH TYPE... - applies only fixes of the given type(s),
-  # so the caller controls ordering (moves before symlinks - see below).
+  # so the caller controls ordering.
   local out_path="$1"; shift
   local applied=0
   while IFS=$'\t' read -r pack_name ftype a b; do
@@ -560,17 +472,6 @@ apply_fixes() {
       [[ $match -eq 0 ]] && continue
     fi
     case "$ftype" in
-      move_pack)
-        if [[ -e "$b" ]]; then
-          echo "SKIP: $pack_name: destination already exists, resolve manually: $b" >&2
-          continue
-        fi
-        confirm "Move $pack_name: $a -> $b ?" || { echo "Skipped $pack_name."; continue; }
-        mkdir -p "$(dirname "$b")"
-        mv "$a" "$b"
-        echo "Moved $pack_name to $b"
-        applied=1
-        ;;
       create_symlink)
         if [[ -e "$a" || -L "$a" ]]; then
           # Another pack's fix in this same run (or something already there)
@@ -593,6 +494,13 @@ apply_fixes() {
         echo "Removed dangling symlink $a"
         applied=1
         ;;
+      remove_stale_lock)
+        confirm "Remove stale .opf-lock for $pack_name (completing an in-progress claim): $a ?" \
+          || { echo "Skipped $pack_name."; continue; }
+        rm -f "$a"
+        echo "Removed stale lock $a"
+        applied=1
+        ;;
     esac
   done < <(fixes_of_type "$out_path" "$@")
   return $((1 - applied))
@@ -608,19 +516,12 @@ print_report "$REPORT_JSON"
 if [[ $FIX -eq 1 ]]; then
   echo
   echo "==> Applying fixes"
-  # Three ordered passes, re-scanning between each: a fix computed from a
-  # stale snapshot can point at the wrong place once an earlier fix in the
-  # same run has already changed the filesystem underneath it.
-  #   1. Moves first: a symlink target computed before a move would point
-  #      at the pack's old (pre-move) location.
-  #   2. Dangling-symlink removal next: removing one can turn an item's
-  #      status from "dangling" into "missing," which needs a fresh scan
-  #      to be recognized as a create_symlink fix.
-  #   3. Symlink creation last, against the now-current state.
-  if apply_fixes "$REPORT_JSON" move_pack; then
-    run_scan "$REPORT_JSON"
-  fi
-  if apply_fixes "$REPORT_JSON" remove_symlink; then
+  # Dangling-symlink removal before symlink creation, re-scanning between:
+  # removing a dangling symlink can turn an item's status from "dangling"
+  # to "missing," which only a fresh scan recognizes as a create_symlink
+  # fix. remove_stale_lock has no such ordering dependency on anything, so
+  # it rides along with whichever phase runs first.
+  if apply_fixes "$REPORT_JSON" remove_symlink remove_stale_lock; then
     run_scan "$REPORT_JSON"
   fi
   apply_fixes "$REPORT_JSON" create_symlink || true

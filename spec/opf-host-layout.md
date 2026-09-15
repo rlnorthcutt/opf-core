@@ -33,23 +33,23 @@ Layout organized by provenance tier:
 
   packs/
     okf-kit/
-      manifest.json                   # vendor: okf -- you are a listed OWNERS
-      artifacts/okf-app.html          # maintainer, so this is Owned
+      manifest.json                   # vendor: okf -- you created this via
+      artifacts/okf-app.html          # create-pack, so it's Owned
       data/wiki/
       skills/okf-skill/
 
   .packs-external/
     okf/
       other-team-kit/                 # SAME vendor (okf) as okf-kit above,
-        manifest.json                 # but you are NOT in this pack's OWNERS --
-        artifacts/ data/ skills/ tools/ routines/   # still External to you
+        manifest.json                 # but you got this via pack-install --
+        artifacts/ data/ skills/ tools/ routines/   # still External regardless
     acme/
-      onboarding-kit/                 # different vendor, same reason: not
-        manifest.json                 # a listed maintainer -- also External
+      onboarding-kit/                 # a different vendor, same reason:
+        manifest.json                 # installed, not created -- External
         artifacts/ data/ skills/ tools/ routines/
 ```
 
-Two `.packs-external/` entries above share nothing except the reason they're there: neither lists this consumer in `OWNERS`. One happens to carry the same vendor string as the Owned example (`okf`); one doesn't. Vendor namespace, team, and org are irrelevant to the tier - see Section 1.3.
+Two `.packs-external/` entries above share nothing except the reason they're there: both arrived via `pack-install`, not `create-pack`. One happens to carry the same vendor string as the Owned example (`okf`); one doesn't. Vendor namespace, team, and org are irrelevant to the tier - see Section 1.3.
 
 **Owned packs are flat; only External packs are vendor-namespaced.** `~/packs/<pack-name>/` has no vendor or team subdirectory - `okf-kit/`, not `okf/okf-kit/` or `<team>/okf-kit/` - because you are the one naming your own Owned packs and can simply avoid picking a name that collides with another Owned pack of yours. `~/.packs-external/<vendor>/<pack-name>/` DOES nest by vendor, because you don't control what a third-party publisher names their pack, and two different external publishers choosing the same pack name is a real collision you have no other way to avoid. That vendor namespace exists to prevent collisions between publishers you don't control - it is not a general "organize packs by team or org" convention, even when your own Owned packs happen to live in a team-owned git group upstream. Where the pack's source repository lives is provenance (recorded in `.opf-lock`, Section 9.1 of the main spec); it has no bearing on this directory layout.
 
@@ -59,14 +59,16 @@ Items live in named folders at a root (system root, project/workspace root, what
 
 ### 1.3 Provenance tiers
 
-Two trust tiers, determined PER CONSUMER for a given pack, not as a fixed property of the pack itself - the same pack can be Owned for the person who maintains it and External for every other consumer who installs it, including a teammate:
+Two trust tiers, determined by HOW a pack arrived for a given consumer, not as a fixed property of the pack itself - the same pack can be Owned for the person who created it and External for every other consumer who installs it, including a teammate:
 
-- **Owned**: this consumer created the pack, or is listed as a maintainer in its `OWNERS` file (`opf-pack-boundaries.md` Section 2). Editable in place; the user (or their agent) is the update path. Standalone owned items live directly in their native per-type folder: no pack, no indirection, editable in place.
-- **External**: this consumer is neither the creator nor a listed maintainer of the pack. Locked/read-only for this consumer, under `~/.packs-external/<vendor>/<pack-name>/`. Updated only by the pack owner pushing new versions; this consumer never edits in place. "Clone to customize" is the only path to Owned, landing as a standalone item in the native folder (or into an owned pack afterward, with materialize-and-symlink).
+- **Owned**: this consumer created the pack (via `create-pack`), or deliberately claimed it - moved or cloned it into their own editable workspace with intent to co-maintain it, removing any stale `.opf-lock` in the process (see below). Editable in place; the user (or their agent) is the update path. Standalone owned items live directly in their native per-type folder: no pack, no indirection, editable in place.
+- **External**: this consumer obtained the pack via `pack-install` (or an equivalent install action) and never separately claimed it. Locked/read-only for this consumer by default, under `~/.packs-external/<vendor>/<pack-name>/`. Updated only by the pack owner pushing new versions; this consumer never edits in place. "Clone to customize" is the only path to Owned, landing as a standalone item in the native folder (or into an owned pack afterward, with materialize-and-symlink).
 
-**Tier is about maintainership, not source, vendor, team, or org.** Check `OWNERS` (or the harness's own maintainer record) for this specific consumer - never the manifest `vendor` field, which the spec vocabulary already notes is "a namespace, not a verified identity," and never "does this pack belong to my team/org." A pack authored under your own team's vendor namespace, living in a repo your org controls, is still External to you specifically if you are not one of its listed maintainers: you have exactly the same read-only relationship to it that you'd have to a stranger's pack. The reverse also holds - a pack under someone else's vendor namespace is Owned by you if you are a listed co-maintainer of it. A harness that finds no maintainer match for the current consumer MUST default that pack to External for them; locked is the safe default, and matches the spec's "installed packs are locked by default" guarantee (Section 1 of the main spec).
+**Tier is about the action taken, not source, vendor, team, or org.** Installing a pack never makes it yours to edit, regardless of who published it - not "does this pack belong to my team/org," not the manifest `vendor` field, which the spec vocabulary already notes is "a namespace, not a verified identity," and not whatever git/platform write access the consumer happens to have to wherever the pack's source repository lives (that access is often broader than any one pack - a whole team or group, not a per-pack grant - so it is not a substitute for this decision). A pack authored under your own team's vendor namespace, living in a repo your org controls, is still External to you if you obtained it by installing it: you have exactly the same read-only relationship to it that you'd have to a stranger's pack, until you take the deliberate step of claiming it. The reverse also holds - a pack under someone else's vendor namespace is Owned by you the moment you create it, or deliberately claim co-maintainership of it, regardless of vendor. A harness MUST default an installed pack to External; locked is the safe default, and matches the spec's "installed packs are locked by default" guarantee (Section 1 of the main spec).
 
-**A harness that doesn't use this directory layout still owes the tier semantics.** The `~/packs/` / `~/.packs-external/` split is one recommended way to realize Owned-vs-External on disk; it is not the only conformant one, and Section 2.6's harness-integration case study already covers a harness (for example a git-native one with auto-discovery and reset-on-update) that manages installs in its own location instead. Whatever the mechanism, it still needs the per-consumer maintainer check above to decide whether in-place edits are allowed or a read-only/reset posture applies - the lock guarantee is what matters, not which folder name expresses it.
+**Claiming co-maintainer status is one deliberate act, not a file to keep in sync.** There is no `OWNERS`-style membership list to check: a consumer becomes Owned for a pack by moving or cloning it into their own editable workspace, at which point they should also remove any `.opf-lock` the pack is carrying - Owned packs don't carry one (there is no installer writing it), so a lingering lock is a sign the claim was started but never finished. `scripts/pack-doctor.sh` treats exactly that combination (a lock, sitting under an owned root) as its one confidently-detectable placement inconsistency, and offers to remove the stale lock, never to move the pack - which direction a mismatch should resolve in is a decision only the consumer can make.
+
+**A harness that doesn't use this directory layout still owes the tier semantics.** The `~/packs/` / `~/.packs-external/` split is one recommended way to realize Owned-vs-External on disk; it is not the only conformant one, and Section 2.6's harness-integration case study already covers a harness (for example a git-native one with auto-discovery and reset-on-update) that manages installs in its own location instead. Whatever the mechanism, it still needs the same rule above - installed means locked by default, created or deliberately claimed means editable - to decide whether in-place edits are allowed or a read-only/reset posture applies. The lock guarantee is what matters, not which folder name expresses it.
 
 ### 1.4 Symlink materialization
 
@@ -131,7 +133,7 @@ The per-user or per-organization shared-content repo. It holds content that is r
 
 ### 2.3 pack-z-template
 
-The minimal skeleton repo used by `new-pack.sh`. Contents: a placeholder `manifest.json` (name, version, and `pack_format` are filled in by the scaffolder), `README.md`, `OWNERS`, `CHANGELOG.md`, the two-line CI include, one example skill folder (SKILL.md plus optional `scripts/`), an empty `data/` folder, and a `.gitignore` that includes `.opf-env` and `.opf-lock`. The rationale is that a new pack goes from proposal to CI-green in one command, with the scan pipeline already wired. The "z-" prefix is a naming convention so the template sorts last in repo listings; adopters may rename it.
+The minimal skeleton repo used by `new-pack.sh`. Contents: a placeholder `manifest.json` (name, version, and `pack_format` are filled in by the scaffolder), `README.md`, `CHANGELOG.md`, the two-line CI include, one example skill folder (SKILL.md plus optional `scripts/`), an empty `data/` folder, and a `.gitignore` that includes `.opf-env` and `.opf-lock`. The rationale is that a new pack goes from proposal to CI-green in one command, with the scan pipeline already wired. The "z-" prefix is a naming convention so the template sorts last in repo listings; adopters may rename it.
 
 ### 2.4 Validator
 
